@@ -2,12 +2,12 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using Mirror;
-using UnityEngine.XR.Interaction.Toolkit;
+
 
 public class VRNetworkInteractable : NetworkBehaviour
 {
     private Rigidbody rb;
-    private XRGrabInteractable xRGrabInteractable;
+    private UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable xRGrabInteractable;
     public VRWeapon vrWeapon;
 
     private void Start()
@@ -19,7 +19,7 @@ public class VRNetworkInteractable : NetworkBehaviour
         }
         if (xRGrabInteractable == null)
         {
-            xRGrabInteractable = GetComponent<XRGrabInteractable>();
+            xRGrabInteractable = GetComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
         }
     }
 
@@ -116,11 +116,11 @@ public class VRNetworkInteractable : NetworkBehaviour
     {
         // Unitys interactable types need some adjustments to stop them behaving weird over network
         // Without this you may notice some pickups rapidly fall through the floor
-        rb.velocity = Vector3.zero;
+        rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
 
         // we can use this check apply different behaviour depending on interactable type
-        if (xRGrabInteractable.movementType == XRBaseInteractable.MovementType.VelocityTracking) { }
+        if (xRGrabInteractable.movementType == UnityEngine.XR.Interaction.Toolkit.Interactables.XRBaseInteractable.MovementType.VelocityTracking) { }
     }
 
     public VRNetworkPlayerScript vrNetworkPlayerScript;

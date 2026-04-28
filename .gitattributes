@@ -21,6 +21,12 @@
 *.playable text eol=lf
 *.uxml text eol=lf
 *.uss text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.shadergraph text eol=lf
+*.renderTexture text eol=lf
+*.wlt text eol=lf
 
 # Large binary Unity assets go through Git LFS.
 *.tga filter=lfs diff=lfs merge=lfs -text
