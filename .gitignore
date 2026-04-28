@@ -17,6 +17,9 @@
 # Recordings can get excessive in size
 /[Rr]ecordings/
 
+# Runtime/generated record data can be very large and should stay local.
+/[Aa]ssets/[Rr]ecord[Dd]ata/
+
 # Uncomment this line if you wish to ignore the asset store tools plugin
 # /[Aa]ssets/AssetStoreTools*
 
