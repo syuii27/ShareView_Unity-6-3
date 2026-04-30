@@ -43,8 +43,33 @@ public class VRPlayerRig : MonoBehaviour
 
     private void HandleMovement()
     {
-        float moveX = Input.GetAxis("Horizontal") * Time.deltaTime * 100.0f;
-        float moveZ = Input.GetAxis("Vertical") * Time.deltaTime * 4f;
+        float horizontal = 0f;
+        float vertical = 0f;
+
+#if ENABLE_INPUT_SYSTEM
+        var keyboard = Keyboard.current;
+        if (keyboard != null)
+        {
+            if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed)
+                horizontal -= 1f;
+            if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed)
+                horizontal += 1f;
+            if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed)
+                vertical -= 1f;
+            if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed)
+                vertical += 1f;
+        }
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+        if (Mathf.Approximately(horizontal, 0f))
+            horizontal = Input.GetAxis("Horizontal");
+        if (Mathf.Approximately(vertical, 0f))
+            vertical = Input.GetAxis("Vertical");
+#endif
+
+        float moveX = horizontal * Time.fixedDeltaTime * 100.0f;
+        float moveZ = vertical * Time.fixedDeltaTime * 4f;
 
         transform.Rotate(0, moveX, 0);
         transform.Translate(0, 0, moveZ);
