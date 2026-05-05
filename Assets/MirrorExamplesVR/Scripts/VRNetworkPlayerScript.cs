@@ -15,6 +15,13 @@ public class VRNetworkPlayerScript : NetworkBehaviour
     public VRPlayerRig vrPlayerRig;
     public VRNetworkHealth vrNetworkHealth;
 
+    private static readonly List<UnityEngine.XR.InputDevice> hmdDevices = new List<UnityEngine.XR.InputDevice>();
+
+    public override void OnStartClient()
+    {
+        base.OnStartClient();
+        HideNetworkModelsInEditorWithoutHmd();
+    }
 
     public override void OnStartLocalPlayer()
     {
@@ -26,6 +33,7 @@ public class VRNetworkPlayerScript : NetworkBehaviour
         //headModel.SetActive(false);
         rHandModel.SetActive(false);
         lHandModel.SetActive(false);
+        HideNetworkModelsInEditorWithoutHmd();
 
         // if no customisation is set, create one.
         if (VRStaticVariables.playerName == "")
@@ -39,6 +47,57 @@ public class VRNetworkPlayerScript : NetworkBehaviour
         /*if(this.vrPlayerRig.singleton.client == 1){
 
         }*/
+    }
+
+    private void HideNetworkModelsInEditorWithoutHmd()
+    {
+#if UNITY_EDITOR
+        if (HasTrackedHmd())
+        {
+            return;
+        }
+
+        SetModelRenderersEnabled(headModel, false);
+        SetModelRenderersEnabled(rHandModel, false);
+        SetModelRenderersEnabled(lHandModel, false);
+#endif
+    }
+
+    private static bool HasTrackedHmd()
+    {
+        if (!UnityEngine.XR.XRSettings.isDeviceActive)
+        {
+            return false;
+        }
+
+        hmdDevices.Clear();
+        UnityEngine.XR.InputDevices.GetDevicesWithCharacteristics(UnityEngine.XR.InputDeviceCharacteristics.HeadMounted, hmdDevices);
+
+        foreach (var device in hmdDevices)
+        {
+            if (device.isValid &&
+                device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.isTracked, out bool isTracked) &&
+                isTracked)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void SetModelRenderersEnabled(GameObject model, bool enabled)
+    {
+        if (!model)
+        {
+            return;
+        }
+
+        Renderer[] renderers = model.GetComponentsInChildren<Renderer>(true);
+        foreach (var renderer in renderers)
+        {
+            renderer.enabled = enabled;
+        }
     }
 
     // a static global list of players that can be used for a variery of features, one being enemies
