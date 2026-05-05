@@ -33,6 +33,11 @@
 # Visual Studio cache directory
 .vs/
 
+# Local .NET CLI/build artifacts for repository tools
+.dotnet-home/
+/[Tt]ools/**/[Bb]in/
+/[Tt]ools/**/[Oo]bj/
+
 # Gradle cache directory
 .gradle/
 
@@ -40,6 +45,7 @@
 ExportedObj/
 .consulo/
 *.csproj
+!/[Tt]ools/[Rr]ecord[Dd]ata[Vv]isualizer/*.csproj
 *.unityproj
 *.sln
 *.suo
