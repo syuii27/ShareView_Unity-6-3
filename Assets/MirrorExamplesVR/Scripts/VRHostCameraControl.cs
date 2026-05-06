@@ -122,7 +122,7 @@ public class VRHostCameraControl : NetworkBehaviour
 
 
     void Start(){
-        maincamera = GameObject.FindWithTag("MainCamera");
+        ResolveMainCamera();
 
         // actionrecord = GameObject.FindObjectOfType<ServerActionRecording>().GetComponent<ServerActionRecording>();
 
@@ -179,6 +179,7 @@ public class VRHostCameraControl : NetworkBehaviour
     private void InitHostLikeUI()
     {
         if (hostUiInitialized) { return; }
+        if (!ResolveMainCamera()) { return; }
 
         // Active the fps controller
         fpsSelect.SetActive(true);
@@ -222,7 +223,13 @@ public class VRHostCameraControl : NetworkBehaviour
 
     private void InitClientLikePlayback()
     {
-        maincamera.GetComponent<TrackedPoseDriver>().enabled = false;
+        if (!ResolveMainCamera()) { return; }
+
+        TrackedPoseDriver trackedPoseDriver = maincamera.GetComponent<TrackedPoseDriver>();
+        if (trackedPoseDriver != null)
+        {
+            trackedPoseDriver.enabled = false;
+        }
         TempPosition = maincamera.transform.position;
         TempRotation = maincamera.transform.rotation;
 
@@ -246,6 +253,7 @@ public class VRHostCameraControl : NetworkBehaviour
         if (localReplayInitialized) { return; }
 
         localReplayMode = true;
+        EnsureReplayTargetsActive();
         InitClientLikePlayback();
         InitHostLikeUI();
         // Hide record-only UI: recording is disabled in local replay mode (Toggle listener
@@ -255,11 +263,64 @@ public class VRHostCameraControl : NetworkBehaviour
         localReplayInitialized = true;
     }
 
+    private bool ResolveMainCamera()
+    {
+        if (maincamera != null) { return true; }
+
+        maincamera = GameObject.FindWithTag("MainCamera");
+        if (maincamera == null)
+        {
+            Debug.LogError("VRHostCameraControl: MainCamera-tagged object was not found.");
+            return false;
+        }
+        return true;
+    }
+
     public void StopLocalReplay()
     {
         localReplayMode = false;
         play = false;
         index = 0;
+    }
+
+    private void EnsureReplayTargetsActive()
+    {
+        ActivateObjectAndAncestors(gameObject);
+
+        if (Boxes != null)
+        {
+            for (int i = 0; i < Boxes.Count; i++)
+            {
+                ActivateObjectAndAncestors(Boxes[i]);
+            }
+        }
+
+        if (actionrecord != null && actionrecord.Boxtrasforms != null)
+        {
+            for (int i = 0; i < actionrecord.Boxtrasforms.Count; i++)
+            {
+                Transform boxTransform = actionrecord.Boxtrasforms[i];
+                if (boxTransform != null)
+                {
+                    ActivateObjectAndAncestors(boxTransform.gameObject);
+                }
+            }
+        }
+    }
+
+    private static void ActivateObjectAndAncestors(GameObject target)
+    {
+        if (target == null) { return; }
+
+        Transform current = target.transform;
+        while (current != null)
+        {
+            if (!current.gameObject.activeSelf)
+            {
+                current.gameObject.SetActive(true);
+            }
+            current = current.parent;
+        }
     }
 
     void Update()
@@ -754,6 +815,7 @@ public class VRHostCameraControl : NetworkBehaviour
             recordtype = record.value;
             play = true;
             index = 0;
+            EnsureReplayTargetsActive();
         }
         else
         {
