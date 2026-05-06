@@ -41,6 +41,7 @@ public class ServerActionRecording : NetworkBehaviour
     private string filePathr;
     private JsonSerializerSettings setting;
     private int countRecord = 0;
+    private bool localReplayInitialized = false;
     //[SyncVar]
     private List<List<Vector3>> Synpositionrecords;
     //[SyncVar]
@@ -68,8 +69,6 @@ public class ServerActionRecording : NetworkBehaviour
             InitClientLikeData();
         }
     }
-
-    public void InitClientLikeDataPublic() { InitClientLikeData(); }
 
     private void InitClientLikeData()
     {
@@ -105,27 +104,38 @@ public class ServerActionRecording : NetworkBehaviour
 
     public void InitLocalReplay()
     {
+        if (localReplayInitialized && HasReplayData)
+        {
+            if (recordSelect != null) { recordSelect.SetActive(true); }
+            return;
+        }
+
         InitClientLikeData();
         record = recordSelect.GetComponent<TMP_Dropdown>();
+        record.ClearOptions();
+        countRecord = 0;
         positionrecords = LoadMPData(filePathp);
-        if (NumOfRecords() > 0)
+        int num = NumOfRecords();
+        if (num > 0)
         {
             rotationrecords = LoadMRData(filePathr);
             SynBoxpositions = LoadBPData(filePathboxp);
             SynBoxrotations = LoadBRData(filePathboxr);
             recordSelect.SetActive(true);
-            int num = NumOfRecords();
             for (int i = 0; i < num; i++)
             {
                 countRecord++;
                 record.options.Add(new TMP_Dropdown.OptionData("Record " + countRecord));
             }
-            Debug.Log("LocalReplay: loaded " + num + " records from " + filePathp);
+            record.value = 0;
+            record.RefreshShownValue();
+            // Debug.Log("LocalReplay: loaded " + num + " records from " + filePathp);
         }
         else
         {
             Debug.LogWarning("LocalReplay: no records found at " + filePathp);
         }
+        localReplayInitialized = true;
     }
 
     void Update()
@@ -342,10 +352,18 @@ public class ServerActionRecording : NetworkBehaviour
             return new List<List<List<Quaternion>>>();
         }
     }
+    public bool HasReplayData {
+        get { return NumOfRecords() > 0; }
+    }
+
     public int NumOfRecords(){
-        return positionrecords.Count;
+        return positionrecords != null ? positionrecords.Count : 0;
     }
     public int Numofactions(int index){
+        if (positionrecords == null || index < 0 || index >= positionrecords.Count)
+        {
+            return 0;
+        }
         return positionrecords[index].Count;
     }
     public Vector3 GetCamerapositions(int id, int index){
@@ -355,19 +373,19 @@ public class ServerActionRecording : NetworkBehaviour
         return new Vector3(0, 0, 0);
     }
     public Quaternion GetCamerarotations(int id, int index){
-        if (id < NumOfRecords() && index < Numofactions(id)){
+        if (rotationrecords != null && id < rotationrecords.Count && index < rotationrecords[id].Count){
             return rotationrecords[id][index];
         }
         return new Quaternion(0, 0, 0, 0);
     }
     public List<Vector3> GetBoxpositions(int id, int index){
-        if (id < NumOfRecords() && index < Numofactions(id)){
+        if (SynBoxpositions != null && id < SynBoxpositions.Count && index < SynBoxpositions[id].Count){
             return SynBoxpositions[id][index];
         }
         return new List<Vector3>();
     }
     public List<Quaternion> GetBoxrotations(int id, int index){
-        if (id < NumOfRecords() && index < Numofactions(id)){
+        if (SynBoxrotations != null && id < SynBoxrotations.Count && index < SynBoxrotations[id].Count){
             return SynBoxrotations[id][index];
         }
         return new List<Quaternion>();

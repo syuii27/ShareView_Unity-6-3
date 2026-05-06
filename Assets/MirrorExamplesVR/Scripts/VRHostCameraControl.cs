@@ -117,6 +117,8 @@ public class VRHostCameraControl : NetworkBehaviour
     private int masktype;
 
     public bool localReplayMode = false;
+    private bool hostUiInitialized = false;
+    private bool localReplayInitialized = false;
 
 
     void Start(){
@@ -176,6 +178,8 @@ public class VRHostCameraControl : NetworkBehaviour
 
     private void InitHostLikeUI()
     {
+        if (hostUiInitialized) { return; }
+
         // Active the fps controller
         fpsSelect.SetActive(true);
         // Active the mask controller
@@ -213,6 +217,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 UpdateClientMask(mask.value);
             }
         });
+        hostUiInitialized = true;
     }
 
     private void InitClientLikePlayback()
@@ -238,13 +243,25 @@ public class VRHostCameraControl : NetworkBehaviour
 
     public void InitLocalReplay()
     {
+        if (localReplayInitialized) { return; }
+
+        localReplayMode = true;
         InitClientLikePlayback();
         InitHostLikeUI();
         // Hide record-only UI: recording is disabled in local replay mode (Toggle listener
         // is registered only in the if(isServer) branch of ServerActionRecording).
         if (recordStart != null) { recordStart.SetActive(false); }
         if (recordTime != null) { recordTime.SetActive(false); }
+        localReplayInitialized = true;
     }
+
+    public void StopLocalReplay()
+    {
+        localReplayMode = false;
+        play = false;
+        index = 0;
+    }
+
     void Update()
     {
         if (isServer)
@@ -273,6 +290,11 @@ public class VRHostCameraControl : NetworkBehaviour
             // In local replay mode there is no host syncing camera/box transforms.
             // Stay idle until user clicks PlaytheRecord (sets play=true).
             if (localReplayMode && !play) return;
+            if (localReplayMode && (actionrecord == null || !actionrecord.HasReplayData))
+            {
+                play = false;
+                return;
+            }
             //SyncBoxTransforms(Boxes);
             if (Time.time < nextFrameTime)
             {
@@ -312,6 +334,12 @@ public class VRHostCameraControl : NetworkBehaviour
                     TempRotation = actionrecord.GetCamerarotations(recordtype, index);
                     TempBoxpositions = actionrecord.GetBoxpositions(recordtype, index);
                     TempBoxrotations = actionrecord.GetBoxrotations(recordtype, index);
+                    if (!HasCompleteBoxFrame(TempBoxpositions, TempBoxrotations))
+                    {
+                        Debug.LogWarning("LocalReplay: invalid box frame data, stopping playback.");
+                        play = false;
+                        return;
+                    }
                     // Debug.Log(TempBoxpositions[14]);
                     if(masktype == 3){
                         subcamera.transform.position = TempPosition;
@@ -334,18 +362,26 @@ public class VRHostCameraControl : NetworkBehaviour
                     // Centerposition.rotation = ServerCenterRatation;
 
                     // Read the record action data with the interval of fps
-                    index += (15 * frameRateInterval).ConvertTo<int>(); 
+                    index += ReplayFrameStep();
 
                     // If read all the action of one record, stop reading the record
                     if(index >= actionrecord.Numofactions(recordtype)){
                         index = 0;
-                        SavePaPosData(participantspos, filePathpapos);
-                        SavePaRotData(participantsrot, filePathparot);
+                        if (!localReplayMode)
+                        {
+                            SavePaPosData(participantspos, filePathpapos);
+                            SavePaRotData(participantsrot, filePathparot);
+                        }
                         participantspos = new List<Vector3>();
                         participantsrot = new List<Quaternion>();
                         play = false;
                     }
                 }else{
+                    if (localReplayMode)
+                    {
+                        play = false;
+                        return;
+                    }
                     // Control the action of the Clients' VR origin by the data from the Server
                     // Centerposition.position = ServerCenterposition;
                     // Centerposition.rotation = ServerCenterRatation;
@@ -703,6 +739,18 @@ public class VRHostCameraControl : NetworkBehaviour
     public void PlaytheRecord(){
         if (localReplayMode)
         {
+            if (record == null || actionrecord == null || !actionrecord.HasReplayData)
+            {
+                Debug.LogWarning("LocalReplay: no replay data loaded.");
+                return;
+            }
+
+            if (record.value < 0 || record.value >= actionrecord.NumOfRecords())
+            {
+                Debug.LogWarning("LocalReplay: selected record index is invalid.");
+                return;
+            }
+
             recordtype = record.value;
             play = true;
             index = 0;
@@ -711,6 +759,18 @@ public class VRHostCameraControl : NetworkBehaviour
         {
             Rectherecordtype(record.value, true, 0);
         }
+    }
+
+    private int ReplayFrameStep()
+    {
+        return Mathf.Max(1, Mathf.RoundToInt(15.0f * frameRateInterval));
+    }
+
+    private bool HasCompleteBoxFrame(List<Vector3> positions, List<Quaternion> rotations)
+    {
+        int required = Boxes != null ? Boxes.Count : 0;
+        return required > 0 && positions != null && rotations != null &&
+            positions.Count >= required && rotations.Count >= required;
     }
     [ClientRpc]
     void UpdateClientMask(int type)
