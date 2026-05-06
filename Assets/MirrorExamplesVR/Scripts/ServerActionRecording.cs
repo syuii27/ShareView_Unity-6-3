@@ -16,6 +16,7 @@ public class ServerActionRecording : NetworkBehaviour
     public GameObject NetworkObject;
     public TMP_Text timeText;
     private TMP_Dropdown record;
+    public bool localReplayMode = false;
     // [SyncVar]
     private bool isRecording = false;
     private float recordingTime = 0.0f;
@@ -64,35 +65,66 @@ public class ServerActionRecording : NetworkBehaviour
             record = recordSelect.GetComponent<TMP_Dropdown>();
             
         }else if(isClient && !isServer){
-            camerapositions = new List<Vector3>();
-            camerarotations = new List<Quaternion>();
-            Boxposts = new List<List<Vector3>>();
-            Boxrotas = new List<List<Quaternion>>();
-            positionrecords = new List<List<Vector3>>();
-            rotationrecords = new List<List<Quaternion>>();
-            Synpositionrecords = new List<List<Vector3>>();
-            Synrotationrecords = new List<List<Quaternion>>();
-            SynBoxpositions = new List<List<List<Vector3>>>();
-            SynBoxrotations = new List<List<List<Quaternion>>>();
-            Boxpositions = new List<List<List<Vector3>>>();
-            Boxrotations = new List<List<List<Quaternion>>>();
-                   
-            
-            timeText.text = "0.0s";
-            filePathboxp = Path.Combine(Application.dataPath, "RecordData", "BoxPosData.json");
-            filePathboxr = Path.Combine(Application.dataPath, "RecordData", "BoxRotData.json");
-            filePathp = Path.Combine(Application.dataPath,"RecordData", "MainPosData.json");
-            filePathr = Path.Combine(Application.dataPath,"RecordData", "MainRotData.json");
+            InitClientLikeData();
+        }
+    }
 
-            var directoryPath = Path.GetDirectoryName(filePathboxp);
-            setting = new JsonSerializerSettings
+    public void InitClientLikeDataPublic() { InitClientLikeData(); }
+
+    private void InitClientLikeData()
+    {
+        camerapositions = new List<Vector3>();
+        camerarotations = new List<Quaternion>();
+        Boxposts = new List<List<Vector3>>();
+        Boxrotas = new List<List<Quaternion>>();
+        positionrecords = new List<List<Vector3>>();
+        rotationrecords = new List<List<Quaternion>>();
+        Synpositionrecords = new List<List<Vector3>>();
+        Synrotationrecords = new List<List<Quaternion>>();
+        SynBoxpositions = new List<List<List<Vector3>>>();
+        SynBoxrotations = new List<List<List<Quaternion>>>();
+        Boxpositions = new List<List<List<Vector3>>>();
+        Boxrotations = new List<List<List<Quaternion>>>();
+
+        timeText.text = "0.0s";
+        filePathboxp = Path.Combine(Application.dataPath, "RecordData", "BoxPosData.json");
+        filePathboxr = Path.Combine(Application.dataPath, "RecordData", "BoxRotData.json");
+        filePathp = Path.Combine(Application.dataPath, "RecordData", "MainPosData.json");
+        filePathr = Path.Combine(Application.dataPath, "RecordData", "MainRotData.json");
+
+        var directoryPath = Path.GetDirectoryName(filePathboxp);
+        setting = new JsonSerializerSettings
+        {
+            ReferenceLoopHandling = ReferenceLoopHandling.Ignore
+        };
+        if (!Directory.Exists(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+    }
+
+    public void InitLocalReplay()
+    {
+        InitClientLikeData();
+        record = recordSelect.GetComponent<TMP_Dropdown>();
+        positionrecords = LoadMPData(filePathp);
+        if (NumOfRecords() > 0)
+        {
+            rotationrecords = LoadMRData(filePathr);
+            SynBoxpositions = LoadBPData(filePathboxp);
+            SynBoxrotations = LoadBRData(filePathboxr);
+            recordSelect.SetActive(true);
+            int num = NumOfRecords();
+            for (int i = 0; i < num; i++)
             {
-                ReferenceLoopHandling = ReferenceLoopHandling.Ignore
-            };
-            if (!Directory.Exists(directoryPath))
-            {
-                Directory.CreateDirectory(directoryPath);
+                countRecord++;
+                record.options.Add(new TMP_Dropdown.OptionData("Record " + countRecord));
             }
+            Debug.Log("LocalReplay: loaded " + num + " records from " + filePathp);
+        }
+        else
+        {
+            Debug.LogWarning("LocalReplay: no records found at " + filePathp);
         }
     }
 

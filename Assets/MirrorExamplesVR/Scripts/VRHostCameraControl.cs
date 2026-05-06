@@ -115,8 +115,10 @@ public class VRHostCameraControl : NetworkBehaviour
     // Send the masktype to all clients
     [SyncVar]
     private int masktype;
-    
-    
+
+    public bool localReplayMode = false;
+
+
     void Start(){
         maincamera = GameObject.FindWithTag("MainCamera");
 
@@ -162,66 +164,86 @@ public class VRHostCameraControl : NetworkBehaviour
                 SyncBoxRotations.Add(Boxes[i].transform.rotation);
                 //Debug.Log(BoxPositions[i]);
             }
-            // Active the fps controller 
-            fpsSelect.SetActive(true);
-            // Active the mask controller 
-            maskSelect.SetActive(true);
-            // Active the RecordButton
-            recordStart.SetActive(true);
-            // Active the RecordText
-            recordTime.SetActive(true);
-            // Active the Border trigger
+            InitHostLikeUI();
+            // Active the Border trigger (server-only: ActiveBorder is [ClientRpc])
             border.SetActive(true);
-            // Initiate the fpsdropdown
-            dropdownfps = fpsSelect.GetComponent<TMP_Dropdown>();
-            // Initiate the maskdropdown
-            mask = maskSelect.GetComponent<TMP_Dropdown>();
-            // Initiate the recorddropdown
-            record = recordSelect.GetComponent<TMP_Dropdown>();
-
-            PreRotation = subcamera.transform.rotation;
-
-            PreRotationDot = subcamera.transform.rotation;
-
-            PreMainRotation = maincamera.transform.rotation;
-
-            PreMainRotationDot = maincamera.transform.rotation;
-            
-            masktype = mask.value;
-
-            // Update the Client fps for all clients by the choice of the server 
-            dropdownfps.onValueChanged.AddListener(delegate {
-                DropdownValueChanged(dropdownfps);
-            });
-
-            // Update the Client mask for all clients by the choice of the server 
-            mask.onValueChanged.AddListener(delegate {
-                masktype = mask.value;
-                UpdateClientMask(mask.value);
-            });
             border.GetComponent<Button>().onClick.AddListener(ActiveBorder);
         }
         if (isClient && !isServer) {
-            // Close the action control of the Client HMD
-            // maincamera.GetComponent<TrackedPoseDriver>().trackingType = TrackedPoseDriver.TrackingType.PositionOnly;
-            maincamera.GetComponent<TrackedPoseDriver>().enabled = false;
-            TempPosition = maincamera.transform.position;
-            TempRotation = maincamera.transform.rotation;
-
-            participantspos = new List<Vector3>();
-            participantsrot = new List<Quaternion>();
-            filePathpapos = Path.Combine(Application.dataPath, "RecordData", "PaPosData.json");
-            filePathparot = Path.Combine(Application.dataPath, "RecordData", "PaRotData.json");
-            var directoryPath = Path.GetDirectoryName(filePathpapos);
-            setting = new JsonSerializerSettings
-            {
-                ReferenceLoopHandling = ReferenceLoopHandling.Ignore
-            };
-            if (!Directory.Exists(directoryPath))
-            {
-                Directory.CreateDirectory(directoryPath);
-            }
+            InitClientLikePlayback();
         }
+    }
+
+    private void InitHostLikeUI()
+    {
+        // Active the fps controller
+        fpsSelect.SetActive(true);
+        // Active the mask controller
+        maskSelect.SetActive(true);
+        // Active the RecordButton
+        recordStart.SetActive(true);
+        // Active the RecordText
+        recordTime.SetActive(true);
+        // Initiate the fpsdropdown
+        dropdownfps = fpsSelect.GetComponent<TMP_Dropdown>();
+        // Initiate the maskdropdown
+        mask = maskSelect.GetComponent<TMP_Dropdown>();
+        // Initiate the recorddropdown
+        record = recordSelect.GetComponent<TMP_Dropdown>();
+
+        PreRotation = subcamera.transform.rotation;
+        PreRotationDot = subcamera.transform.rotation;
+        PreMainRotation = maincamera.transform.rotation;
+        PreMainRotationDot = maincamera.transform.rotation;
+
+        masktype = mask.value;
+
+        dropdownfps.onValueChanged.AddListener(delegate {
+            DropdownValueChanged(dropdownfps);
+        });
+
+        mask.onValueChanged.AddListener(delegate {
+            masktype = mask.value;
+            if (localReplayMode)
+            {
+                ApplyMaskLocal(mask.value);
+            }
+            else
+            {
+                UpdateClientMask(mask.value);
+            }
+        });
+    }
+
+    private void InitClientLikePlayback()
+    {
+        maincamera.GetComponent<TrackedPoseDriver>().enabled = false;
+        TempPosition = maincamera.transform.position;
+        TempRotation = maincamera.transform.rotation;
+
+        participantspos = new List<Vector3>();
+        participantsrot = new List<Quaternion>();
+        filePathpapos = Path.Combine(Application.dataPath, "RecordData", "PaPosData.json");
+        filePathparot = Path.Combine(Application.dataPath, "RecordData", "PaRotData.json");
+        var directoryPath = Path.GetDirectoryName(filePathpapos);
+        setting = new JsonSerializerSettings
+        {
+            ReferenceLoopHandling = ReferenceLoopHandling.Ignore
+        };
+        if (!Directory.Exists(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+    }
+
+    public void InitLocalReplay()
+    {
+        InitClientLikePlayback();
+        InitHostLikeUI();
+        // Hide record-only UI: recording is disabled in local replay mode (Toggle listener
+        // is registered only in the if(isServer) branch of ServerActionRecording).
+        if (recordStart != null) { recordStart.SetActive(false); }
+        if (recordTime != null) { recordTime.SetActive(false); }
     }
     void Update()
     {
@@ -246,8 +268,11 @@ public class VRHostCameraControl : NetworkBehaviour
             ServerCenterRatation = Centerposition.rotation;
 
         }
-        if (isClient && !isServer) // Make sure the change is on clients
+        if ((isClient && !isServer) || localReplayMode) // playback runs on pure client OR local replay mode
         {
+            // In local replay mode there is no host syncing camera/box transforms.
+            // Stay idle until user clicks PlaytheRecord (sets play=true).
+            if (localReplayMode && !play) return;
             //SyncBoxTransforms(Boxes);
             if (Time.time < nextFrameTime)
             {
@@ -281,7 +306,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 //return;
                 
             }else{
-                if(play == true && actionrecord.NumOfRecords() > 0){
+                if(play == true && actionrecord != null && actionrecord.NumOfRecords() > 0){
                     // Control the action of the Clients' main camera by the data from the Server
                     TempPosition = actionrecord.GetCamerapositions(recordtype, index);
                     TempRotation = actionrecord.GetCamerarotations(recordtype, index);
@@ -676,62 +701,74 @@ public class VRHostCameraControl : NetworkBehaviour
     }
     // Play the record
     public void PlaytheRecord(){
-    
-        Rectherecordtype(record.value, true, 0);
+        if (localReplayMode)
+        {
+            recordtype = record.value;
+            play = true;
+            index = 0;
+        }
+        else
+        {
+            Rectherecordtype(record.value, true, 0);
+        }
     }
     [ClientRpc]
     void UpdateClientMask(int type)
     {
         if (isClient && !isServer){
-            // Change the Mask of the Clients by the Choice Selected by the Server 
-            switch(type){
-                case 0:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(false);
-                    break;
-                case 1:
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov2(false);
-                    panel.GetComponent<Volume>().enabled = true;              
-                    break;
-                case 2:
-                    panel.GetComponent<Volume>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(false);
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = true;
-                    break;
-                case 3:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(false);
-                    SetCameraToLimitFov(true);
-                    break;
-                case 4:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov2(false);
-                    SetCameraToLimitFov1(true);
-                    break;
-                case 5:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(true);
-                    break;
-            default:
-                    break;
-            }
+            ApplyMaskLocal(type);
         }
-        
+    }
+
+    private void ApplyMaskLocal(int type)
+    {
+        // Change the Mask by the Choice Selected
+        switch(type){
+            case 0:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                break;
+            case 1:
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov2(false);
+                panel.GetComponent<Volume>().enabled = true;
+                break;
+            case 2:
+                panel.GetComponent<Volume>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = true;
+                break;
+            case 3:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                SetCameraToLimitFov(true);
+                break;
+            case 4:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov2(false);
+                SetCameraToLimitFov1(true);
+                break;
+            case 5:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(true);
+                break;
+            default:
+                break;
+        }
     }
     void SetCameraToLimitFov(bool flag){
         //subcamera.SetActive(flag);

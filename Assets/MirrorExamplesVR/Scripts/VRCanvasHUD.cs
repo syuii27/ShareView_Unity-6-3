@@ -18,6 +18,9 @@ public class VRCanvasHUD : MonoBehaviour
     // UI
     public GameObject PanelStart, PanelStop;
     public Button buttonHost, buttonServer, buttonClient, buttonStop, buttonAuto;
+    public Button buttonLocalReplay;
+    public ServerActionRecording actionRecord;
+    public VRHostCameraControl hostCamera;
     public Text infoText;
     // legacy inputfield interaction does not auto bring up a keyboard on headset builds, use tmp.
     public TMP_InputField inputFieldAddress, inputFieldPlayerName;
@@ -31,6 +34,10 @@ public class VRCanvasHUD : MonoBehaviour
         buttonClient.onClick.AddListener(ButtonClient);
         buttonStop.onClick.AddListener(ButtonStop);
         buttonAuto.onClick.AddListener(ButtonAuto);
+        if (buttonLocalReplay != null)
+        {
+            buttonLocalReplay.onClick.AddListener(ButtonLocalReplay);
+        }
 
         //Update the canvas text if you have manually changed network managers address from the game object before starting the game scene
         inputFieldAddress.text = NetworkManager.singleton.networkAddress;
@@ -137,6 +144,70 @@ public class VRCanvasHUD : MonoBehaviour
     {
         SetupInfoText("Auto Starting.");
         StartCoroutine(Waiter());
+    }
+
+    // Enter offline local replay mode: do NOT start any Mirror role.
+    // The two NetworkBehaviour components remain unspawned (isServer/isClient false),
+    // so we manually trigger their local-only init paths.
+    public void ButtonLocalReplay()
+    {
+        StartCoroutine(LocalReplayCoroutine());
+    }
+
+    private IEnumerator LocalReplayCoroutine()
+    {
+        // Don't go through SetupInfoText -> SetupCanvas; SetupCanvas would re-enable PanelStart
+        // because NetworkClient/Server are both inactive in local replay mode.
+        infoText.text = "Local Replay Mode";
+        discoveredServers.Clear();
+
+        // FindObjectsByType with Include picks up inactive scene objects too.
+        // The scene may contain multiple instances (e.g. on player rig prefabs).
+        var allActionRecords = FindObjectsByType<ServerActionRecording>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        var allHostCameras = FindObjectsByType<VRHostCameraControl>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+        if (actionRecord == null && allActionRecords.Length > 0) { actionRecord = allActionRecords[0]; }
+        if (hostCamera == null && allHostCameras.Length > 0) { hostCamera = allHostCameras[0]; }
+
+        // These NetworkBehaviours are inactive at scene start (normally activated by NetworkManager).
+        // Activate all instances + ancestors so Start() runs and child UI shows.
+        foreach (var ar in allActionRecords) { ActivateAncestors(ar.gameObject); }
+        foreach (var hc in allHostCameras) { ActivateAncestors(hc.gameObject); }
+
+        // Wait one frame so Awake/Start fire on the freshly-activated components.
+        yield return null;
+
+        // Initialize ALL instances so their internal lists (positionrecords etc) are non-null.
+        // Only the primary (actionRecord) loads JSON + populates dropdown to avoid duplicate options.
+        foreach (var ar in allActionRecords)
+        {
+            ar.localReplayMode = true;
+            if (ar == actionRecord) { ar.InitLocalReplay(); }
+            else { ar.InitClientLikeDataPublic(); }
+        }
+        // Re-wire every VRHostCameraControl's actionrecord field to the primary loaded instance,
+        // so VRHostCameraControl.Update -> actionrecord.NumOfRecords() doesn't NPE on a sibling
+        // instance whose positionrecords is null.
+        foreach (var hc in allHostCameras)
+        {
+            hc.localReplayMode = true;
+            if (actionRecord != null) { hc.actionrecord = actionRecord; }
+        }
+        // Only run UI/playback init on the chosen primary host camera (avoid duplicate listeners).
+        if (hostCamera != null) { hostCamera.InitLocalReplay(); }
+
+        if (PanelStart != null) { PanelStart.SetActive(false); }
+        if (PanelStop != null) { PanelStop.SetActive(true); }
+    }
+
+    private static void ActivateAncestors(GameObject go)
+    {
+        Transform t = go.transform;
+        while (t != null)
+        {
+            if (!t.gameObject.activeSelf) { t.gameObject.SetActive(true); }
+            t = t.parent;
+        }
     }
 
     // manually call canvas changes for performance, can lazily be done via Update()
