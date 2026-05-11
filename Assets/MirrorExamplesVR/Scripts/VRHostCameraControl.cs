@@ -212,6 +212,9 @@ public class VRHostCameraControl : NetworkBehaviour
             if (localReplayMode)
             {
                 ApplyMaskLocal(mask.value);
+                // ApplyMaskLocal -> SetCameraToLimitFov(false) disables main TPD for
+                // mask 0/1/2/4/5. In idle state we need it back so the user can look around.
+                if (!play) { SetMainCameraTrackedPose(true); }
             }
             else
             {
@@ -255,12 +258,29 @@ public class VRHostCameraControl : NetworkBehaviour
         localReplayMode = true;
         EnsureReplayTargetsActive();
         InitClientLikePlayback();
+        // Idle state in local replay should let HMD drive the view; InitClientLikePlayback
+        // disabled the TrackedPoseDriver for real-client semantics, override that here.
+        SetMainCameraTrackedPose(true);
         InitHostLikeUI();
         // Hide record-only UI: recording is disabled in local replay mode (Toggle listener
         // is registered only in the if(isServer) branch of ServerActionRecording).
         if (recordStart != null) { recordStart.SetActive(false); }
         if (recordTime != null) { recordTime.SetActive(false); }
         localReplayInitialized = true;
+    }
+
+    private void SetMainCameraTrackedPose(bool enable)
+    {
+        if (!ResolveMainCamera()) { return; }
+        var tpd = maincamera.GetComponent<TrackedPoseDriver>();
+        if (tpd == null) { return; }
+        tpd.enabled = enable;
+        // SetCameraToLimitFov leaves trackingType at RotationOnly; restore full pose so
+        // idle local-replay users can both turn their head and walk freely.
+        if (enable)
+        {
+            tpd.trackingType = TrackedPoseDriver.TrackingType.RotationAndPosition;
+        }
     }
 
     private bool ResolveMainCamera()
@@ -281,6 +301,7 @@ public class VRHostCameraControl : NetworkBehaviour
         localReplayMode = false;
         play = false;
         index = 0;
+        SetMainCameraTrackedPose(true);
     }
 
     private void EnsureReplayTargetsActive()
@@ -350,10 +371,30 @@ public class VRHostCameraControl : NetworkBehaviour
         {
             // In local replay mode there is no host syncing camera/box transforms.
             // Stay idle until user clicks PlaytheRecord (sets play=true).
-            if (localReplayMode && !play) return;
+            if (localReplayMode && !play)
+            {
+                // Sub/Fov cameras have RotationOnly TPDs; without an external position
+                // driver they would render from stale world positions (mask 4 fails to
+                // stereo-fuse, mask 5 peripheral view drifts outside the room). Mirror
+                // the HMD-driven maincamera position so both render the observer's view.
+                if (maincamera != null)
+                {
+                    Vector3 headPos = maincamera.transform.position;
+                    if (masktype == 5 && subcamera != null && subcamera.activeInHierarchy)
+                    {
+                        subcamera.transform.position = headPos;
+                    }
+                    if (masktype == 4 && fovcamera != null && fovcamera.activeInHierarchy)
+                    {
+                        fovcamera.transform.position = headPos;
+                    }
+                }
+                return;
+            }
             if (localReplayMode && (actionrecord == null || !actionrecord.HasReplayData))
             {
                 play = false;
+                SetMainCameraTrackedPose(true);
                 return;
             }
             //SyncBoxTransforms(Boxes);
@@ -369,7 +410,7 @@ public class VRHostCameraControl : NetworkBehaviour
                     
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
-                    subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
+                    subcamera.transform.position = TempPosition;
                     
                 }else{
                     maincamera.transform.position = TempPosition;
@@ -399,6 +440,7 @@ public class VRHostCameraControl : NetworkBehaviour
                     {
                         Debug.LogWarning("LocalReplay: invalid box frame data, stopping playback.");
                         play = false;
+                        if (localReplayMode) { SetMainCameraTrackedPose(true); }
                         return;
                     }
                     // Debug.Log(TempBoxpositions[14]);
@@ -409,7 +451,7 @@ public class VRHostCameraControl : NetworkBehaviour
                     }else if(masktype == 5){
                         maincamera.transform.position = TempPosition;
                         maincamera.transform.rotation = TempRotation;
-                        subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
+                        subcamera.transform.position = TempPosition;
                     }
                     participantspos.Add(TempPosition);
                     participantsrot.Add(subcamera.transform.rotation);
@@ -436,11 +478,13 @@ public class VRHostCameraControl : NetworkBehaviour
                         participantspos = new List<Vector3>();
                         participantsrot = new List<Quaternion>();
                         play = false;
+                        if (localReplayMode) { SetMainCameraTrackedPose(true); }
                     }
                 }else{
                     if (localReplayMode)
                     {
                         play = false;
+                        SetMainCameraTrackedPose(true);
                         return;
                     }
                     // Control the action of the Clients' VR origin by the data from the Server
@@ -816,6 +860,8 @@ public class VRHostCameraControl : NetworkBehaviour
             play = true;
             index = 0;
             EnsureReplayTargetsActive();
+            // Playback owns the maincamera transform; let JSON drive it without HMD fighting it.
+            SetMainCameraTrackedPose(false);
         }
         else
         {
