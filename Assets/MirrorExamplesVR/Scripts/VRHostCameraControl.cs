@@ -21,6 +21,7 @@ public class VRHostCameraControl : NetworkBehaviour
     public GameObject fovcamera;
     public GameObject Image_Mask;
     public GameObject Image_Mask1;
+    public GameObject Image_Mask_Simple;
     public GameObject White_Circle;
     public GameObject fpsSelect;
     public GameObject maskSelect;
@@ -120,6 +121,11 @@ public class VRHostCameraControl : NetworkBehaviour
     private bool hostUiInitialized = false;
     private bool localReplayInitialized = false;
 
+    // Dropdown index → internal mask code in ApplyMaskLocal switch.
+    // Order: NoMask, SimpleMask, FovOnly, PointOnly, FullMask.
+    // Keep legacy codes 1..4 reachable: re-add an entry here to surface them again.
+    private readonly int[] dropdownToMaskCode = new int[] { 0, 6, 8, 7, 5 };
+
 
     void Start(){
         ResolveMainCamera();
@@ -201,27 +207,34 @@ public class VRHostCameraControl : NetworkBehaviour
         PreMainRotation = maincamera.transform.rotation;
         PreMainRotationDot = maincamera.transform.rotation;
 
-        masktype = mask.value;
+        masktype = DropdownIndexToMaskCode(mask.value);
 
         dropdownfps.onValueChanged.AddListener(delegate {
             DropdownValueChanged(dropdownfps);
         });
 
         mask.onValueChanged.AddListener(delegate {
-            masktype = mask.value;
+            int code = DropdownIndexToMaskCode(mask.value);
+            masktype = code;
             if (localReplayMode)
             {
-                ApplyMaskLocal(mask.value);
+                ApplyMaskLocal(code);
                 // ApplyMaskLocal -> SetCameraToLimitFov(false) disables main TPD for
                 // mask 0/1/2/4/5. In idle state we need it back so the user can look around.
                 if (!play) { SetMainCameraTrackedPose(true); }
             }
             else
             {
-                UpdateClientMask(mask.value);
+                UpdateClientMask(code);
             }
         });
         hostUiInitialized = true;
+    }
+
+    private int DropdownIndexToMaskCode(int idx)
+    {
+        if (idx < 0 || idx >= dropdownToMaskCode.Length) { return 0; }
+        return dropdownToMaskCode[idx];
     }
 
     private void InitClientLikePlayback()
@@ -380,7 +393,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 if (maincamera != null)
                 {
                     Vector3 headPos = maincamera.transform.position;
-                    if (masktype == 5 && subcamera != null && subcamera.activeInHierarchy)
+                    if ((masktype == 8 || masktype == 7 || masktype == 5) && subcamera != null && subcamera.activeInHierarchy)
                     {
                         subcamera.transform.position = headPos;
                     }
@@ -404,14 +417,14 @@ public class VRHostCameraControl : NetworkBehaviour
                 if(masktype == 3){
                     subcamera.transform.position = TempPosition;
                     subcamera.transform.rotation = TempRotation;
-                    maincamera.transform.position = TempPosition; 
+                    maincamera.transform.position = TempPosition;
                     //maincamera.transform.rotation = syncedRotation;
-                }else if(masktype == 5){
-                    
+                }else if(masktype == 8 || masktype == 7 || masktype == 5){
+
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
                     subcamera.transform.position = TempPosition;
-                    
+
                 }else{
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
@@ -448,7 +461,7 @@ public class VRHostCameraControl : NetworkBehaviour
                         subcamera.transform.position = TempPosition;
                         subcamera.transform.rotation = TempRotation;
                         maincamera.transform.position = TempPosition;
-                    }else if(masktype == 5){
+                    }else if(masktype == 8 || masktype == 7 || masktype == 5){
                         maincamera.transform.position = TempPosition;
                         maincamera.transform.rotation = TempRotation;
                         subcamera.transform.position = TempPosition;
@@ -498,7 +511,7 @@ public class VRHostCameraControl : NetworkBehaviour
                         maincamera.transform.position = syncedPosition; 
                         //maincamera.transform.rotation = syncedRotation;
                     }
-                    else if(masktype == 5){
+                    else if(masktype == 8 || masktype == 7 || masktype == 5){
                         //ChangetheCenterAndAttach();
                         // Update the camera data
                         maincamera.transform.position = syncedPosition;
@@ -548,13 +561,16 @@ public class VRHostCameraControl : NetworkBehaviour
             }
             if(Time.time >= nextCenterTime){
                 nextCenterTime = Time.time + intervalForCenterChange;
-                if(masktype == 5){
+                // FovOnly + FullMask drive the central ellipse animation; PointOnly hides the
+                // ellipse RawImage so the size update would be wasted work.
+                if(masktype == 8 || masktype == 5){
                     ChangetheCenterSize();
                 }
             }
             if(Time.time >= nextDotTime){
                 nextDotTime = Time.time + intervalForDotChange;
-                if(masktype == 5){
+                // PointOnly + FullMask draw the moving dots; FovOnly intentionally omits them.
+                if(masktype == 7 || masktype == 5){
                     ChangetheDotPosition();
                 }
             }
@@ -890,8 +906,16 @@ public class VRHostCameraControl : NetworkBehaviour
 
     private void ApplyMaskLocal(int type)
     {
-        // Change the Mask by the Choice Selected
+        // SimpleMask uses Image_Mask_Simple; clear it on every switch so it never leaks
+        // into another mode that doesn't own it.
+        if (Image_Mask_Simple != null) { Image_Mask_Simple.SetActive(false); }
+
+        // ----- Cases below are ordered to match the MaskSelect dropdown (see dropdownToMaskCode).
+        // ----- Dropdown order: NoMask(0) → SimpleMask(6) → FovOnly(8) → PointOnly(7) → FullMask(5).
+        // ----- Legacy cases 1..4 are kept at the bottom — unreachable via the current dropdown
+        // ----- but preserved for future reuse / experiments.
         switch(type){
+            // Dropdown index 0 — NoMask: no overlay, no FOV change.
             case 0:
                 panel.GetComponent<Volume>().enabled = false;
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
@@ -899,6 +923,53 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetCameraToLimitFov1(false);
                 SetCameraToLimitFov2(false);
                 break;
+            // Dropdown index 1 — SimpleMask: static elliptical gradient, no FOV change, no dots, no animation.
+            case 6:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                if (Image_Mask_Simple != null) { Image_Mask_Simple.SetActive(true); }
+                break;
+            // Dropdown index 2 — FovOnly: same as FullMask but the dot drawing is gated off in Update().
+            case 8:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                RestoreImageMask1Raw();
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(true);
+                break;
+            // Dropdown index 3 — PointOnly: same dot system as FullMask, but no center ellipse and no FOV shrink.
+            case 7:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(true);
+                // Undo SetCameraToLimitFov2's FOV change so the main view is unaffected.
+                maincamera.GetComponent<Camera>().fieldOfView = 60f;
+                // Hide the central ellipse mask but keep the GameObject active so the
+                // instantiated dot Images can still render under it.
+                {
+                    var mask1Raw = Image_Mask1.GetComponent<RawImage>();
+                    if (mask1Raw != null) { mask1Raw.enabled = false; }
+                }
+                break;
+            // Dropdown index 4 — FullMask: original mask 5 (LimitFov3) — central ellipse + dots + FOV shrink.
+            case 5:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                // PointOnly (case 7) disables Image_Mask1's RawImage; FullMask must restore it.
+                RestoreImageMask1Raw();
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(true);
+                break;
+
+            // ----- Legacy: not surfaced by the current dropdown. -----
+            // Old MaskFull — full-screen URP Volume post-processing.
             case 1:
                 SetCameraToLimitFov(false);
                 SetCameraToLimitFov1(false);
@@ -906,6 +977,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetCameraToLimitFov2(false);
                 panel.GetComponent<Volume>().enabled = true;
                 break;
+            // Old MaskTrans — flat translucent overlay panel image.
             case 2:
                 panel.GetComponent<Volume>().enabled = false;
                 SetCameraToLimitFov(false);
@@ -913,6 +985,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetCameraToLimitFov2(false);
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = true;
                 break;
+            // Old LimitFov — Image_Mask + main TPD set to RotationOnly.
             case 3:
                 panel.GetComponent<Volume>().enabled = false;
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
@@ -920,6 +993,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetCameraToLimitFov2(false);
                 SetCameraToLimitFov(true);
                 break;
+            // Old LimitFov2 — fovcamera + camera rect crop (mono only).
             case 4:
                 panel.GetComponent<Volume>().enabled = false;
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
@@ -927,16 +1001,16 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetCameraToLimitFov2(false);
                 SetCameraToLimitFov1(true);
                 break;
-            case 5:
-                panel.GetComponent<Volume>().enabled = false;
-                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                SetCameraToLimitFov(false);
-                SetCameraToLimitFov1(false);
-                SetCameraToLimitFov2(true);
-                break;
             default:
                 break;
         }
+    }
+
+    private void RestoreImageMask1Raw()
+    {
+        if (Image_Mask1 == null) { return; }
+        var raw = Image_Mask1.GetComponent<RawImage>();
+        if (raw != null && !raw.enabled) { raw.enabled = true; }
     }
     void SetCameraToLimitFov(bool flag){
         //subcamera.SetActive(flag);
