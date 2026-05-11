@@ -948,14 +948,24 @@ public class VRHostCameraControl : NetworkBehaviour
     }
     void SetCameraToLimitFov1(bool flag){
         fovcamera.SetActive(flag);
+        var cam = maincamera.GetComponent<Camera>();
+        // Camera.rect under XR single-pass stereo applies viewport cropping per eye without
+        // adjusting the per-eye projection matrix, so left/right diverge and fail to fuse.
+        // Combined with mismatched FOV (38.3 vs fovcamera's 60), the central/peripheral
+        // stereo cues conflict. Skip the rect/FOV change when stereo is active and keep the
+        // legacy mono behavior for non-stereo (e.g. ParrelSync client without HMD).
+        bool stereoActive = UnityEngine.XR.XRSettings.enabled
+                            && UnityEngine.XR.XRSettings.isDeviceActive;
         if(flag){
-            maincamera.GetComponent<Camera>().rect = new Rect(0.2f, 0.2f, 0.6f, 0.6f);
-            maincamera.GetComponent<Camera>().fieldOfView = 38.3f;
+            if(!stereoActive){
+                cam.rect = new Rect(0.2f, 0.2f, 0.6f, 0.6f);
+                cam.fieldOfView = 38.3f;
+            }
         }else{
-            maincamera.GetComponent<Camera>().rect = new Rect(0.0f, 0.0f, 1.0f, 1.0f);
-            maincamera.GetComponent<Camera>().fieldOfView = 60f;
+            cam.rect = new Rect(0.0f, 0.0f, 1.0f, 1.0f);
+            cam.fieldOfView = 60f;
         }
-        
+
     }
     void SetCameraToLimitFov2(bool flag){
         Image_Mask1.SetActive(flag);
