@@ -18,7 +18,11 @@ public class VRCanvasHUD : MonoBehaviour
     // UI
     public GameObject PanelStart, PanelStop;
     public Button buttonHost, buttonServer, buttonClient, buttonStop, buttonAuto;
+    public Button buttonLocalReplay;
+    public ServerActionRecording actionRecord;
+    public VRHostCameraControl hostCamera;
     public Text infoText;
+    private bool localReplayStarted;
     // legacy inputfield interaction does not auto bring up a keyboard on headset builds, use tmp.
     public TMP_InputField inputFieldAddress, inputFieldPlayerName;
 
@@ -31,6 +35,10 @@ public class VRCanvasHUD : MonoBehaviour
         buttonClient.onClick.AddListener(ButtonClient);
         buttonStop.onClick.AddListener(ButtonStop);
         buttonAuto.onClick.AddListener(ButtonAuto);
+        if (buttonLocalReplay != null)
+        {
+            buttonLocalReplay.onClick.AddListener(ButtonLocalReplay);
+        }
 
         //Update the canvas text if you have manually changed network managers address from the game object before starting the game scene
         inputFieldAddress.text = NetworkManager.singleton.networkAddress;
@@ -113,6 +121,12 @@ public class VRCanvasHUD : MonoBehaviour
     public void ButtonStop()
     {
         SetupInfoText("Stopping.");
+        if (localReplayStarted)
+        {
+            if (hostCamera != null) { hostCamera.StopLocalReplay(); }
+            if (actionRecord != null) { actionRecord.localReplayMode = false; }
+            localReplayStarted = false;
+        }
         // stop host if host mode
         if (NetworkServer.active && NetworkClient.isConnected)
         {
@@ -137,6 +151,152 @@ public class VRCanvasHUD : MonoBehaviour
     {
         SetupInfoText("Auto Starting.");
         StartCoroutine(Waiter());
+    }
+
+    // Enter offline local replay mode: do NOT start any Mirror role.
+    // The two NetworkBehaviour components remain unspawned (isServer/isClient false),
+    // so we manually trigger their local-only init paths.
+    public void ButtonLocalReplay()
+    {
+        if (localReplayStarted)
+        {
+            infoText.text = "Local Replay Mode";
+            return;
+        }
+        StartCoroutine(LocalReplayCoroutine());
+    }
+
+    private IEnumerator LocalReplayCoroutine()
+    {
+        if (NetworkServer.active || NetworkClient.active || NetworkClient.isConnected)
+        {
+            infoText.text = "Stop network before Local Replay.";
+            yield break;
+        }
+
+        // Don't go through SetupInfoText -> SetupCanvas; SetupCanvas would re-enable PanelStart
+        // because NetworkClient/Server are both inactive in local replay mode.
+        infoText.text = "Local Replay Mode";
+        discoveredServers.Clear();
+        if (networkDiscovery != null) { networkDiscovery.StopDiscovery(); }
+
+        // FindObjectsByType with Include picks up inactive scene objects too.
+        // The scene may contain multiple instances (e.g. on player rig prefabs).
+        var allActionRecords = FindObjectsByType<ServerActionRecording>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        var allHostCameras = FindObjectsByType<VRHostCameraControl>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+        actionRecord = ResolveActionRecord(actionRecord, allActionRecords);
+        hostCamera = ResolveHostCamera(hostCamera, allHostCameras);
+
+        if (actionRecord == null || hostCamera == null)
+        {
+            infoText.text = "Local Replay setup missing.";
+            Debug.LogError("LocalReplay: could not resolve primary ServerActionRecording or VRHostCameraControl.");
+            yield break;
+        }
+
+        // These NetworkBehaviours can be under inactive XR rig slots. Activate only
+        // the selected primary pair to avoid waking duplicate/incomplete scene copies.
+        ActivateAncestors(actionRecord.gameObject);
+        ActivateAncestors(hostCamera.gameObject);
+
+        // Wait one frame so Awake/Start fire on the freshly-activated components.
+        yield return null;
+
+        actionRecord.localReplayMode = true;
+        actionRecord.InitLocalReplay();
+
+        hostCamera.localReplayMode = true;
+        hostCamera.actionrecord = actionRecord;
+        hostCamera.InitLocalReplay();
+
+        if (PanelStart != null) { PanelStart.SetActive(false); }
+        if (PanelStop != null) { PanelStop.SetActive(true); }
+        localReplayStarted = true;
+    }
+
+    private static ServerActionRecording ResolveActionRecord(ServerActionRecording preferred, ServerActionRecording[] candidates)
+    {
+        if (IsUsableActionRecord(preferred)) { return preferred; }
+
+        ServerActionRecording best = null;
+        int bestScore = int.MinValue;
+        foreach (var candidate in candidates)
+        {
+            int score = ScoreActionRecord(candidate);
+            if (score > bestScore)
+            {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+        return bestScore >= 130 ? best : null;
+    }
+
+    private static VRHostCameraControl ResolveHostCamera(VRHostCameraControl preferred, VRHostCameraControl[] candidates)
+    {
+        if (IsUsableHostCamera(preferred)) { return preferred; }
+
+        VRHostCameraControl best = null;
+        int bestScore = int.MinValue;
+        foreach (var candidate in candidates)
+        {
+            int score = ScoreHostCamera(candidate);
+            if (score > bestScore)
+            {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+        return bestScore >= 160 ? best : null;
+    }
+
+    private static bool IsUsableActionRecord(ServerActionRecording candidate)
+    {
+        return ScoreActionRecord(candidate) >= 130;
+    }
+
+    private static int ScoreActionRecord(ServerActionRecording candidate)
+    {
+        if (candidate == null) { return int.MinValue; }
+
+        int score = 0;
+        if (candidate.enabled) { score += 100; }
+        if (candidate.recordSelect != null) { score += 20; }
+        if (candidate.syncButton != null) { score += 20; }
+        if (candidate.timeText != null) { score += 10; }
+        if (candidate.serverCameraTransform != null) { score += 10; }
+        if (candidate.Boxtrasforms != null) { score += Mathf.Min(candidate.Boxtrasforms.Count, 30); }
+        return score;
+    }
+
+    private static bool IsUsableHostCamera(VRHostCameraControl candidate)
+    {
+        return ScoreHostCamera(candidate) >= 160;
+    }
+
+    private static int ScoreHostCamera(VRHostCameraControl candidate)
+    {
+        if (candidate == null) { return int.MinValue; }
+
+        int score = 0;
+        if (candidate.enabled) { score += 100; }
+        if (candidate.recordSelect != null) { score += 20; }
+        if (candidate.White_Circle != null) { score += 20; }
+        if (candidate.border != null) { score += 20; }
+        if (candidate.actionrecord != null) { score += 10; }
+        if (candidate.Boxes != null) { score += Mathf.Min(candidate.Boxes.Count, 30); }
+        return score;
+    }
+
+    private static void ActivateAncestors(GameObject go)
+    {
+        Transform t = go.transform;
+        while (t != null)
+        {
+            if (!t.gameObject.activeSelf) { t.gameObject.SetActive(true); }
+            t = t.parent;
+        }
     }
 
     // manually call canvas changes for performance, can lazily be done via Update()
@@ -221,4 +381,3 @@ public class VRCanvasHUD : MonoBehaviour
         VRStaticVariables.playerName = inputFieldPlayerName.text;
     }
 }
-

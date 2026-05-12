@@ -22,6 +22,10 @@ public class VRHostCameraControl : NetworkBehaviour
     public GameObject Image_Mask;
     public GameObject Image_Mask1;
     public GameObject White_Circle;
+    public Material simpleMaskMaterial;
+    private Material originalImageMask1Material;
+    private Color mainCameraDefaultBgColor;
+    private bool mainCameraBgCaptured;
     public GameObject fpsSelect;
     public GameObject maskSelect;
     public GameObject recordStart;
@@ -115,10 +119,19 @@ public class VRHostCameraControl : NetworkBehaviour
     // Send the masktype to all clients
     [SyncVar]
     private int masktype;
-    
-    
+
+    public bool localReplayMode = false;
+    private bool hostUiInitialized = false;
+    private bool localReplayInitialized = false;
+
+    // Dropdown index → internal mask code in ApplyMaskLocal switch.
+    // Order: NoMask, SimpleMask, FovOnly, PointOnly, FullMask.
+    // Keep legacy codes 1..4 reachable: re-add an entry here to surface them again.
+    private readonly int[] dropdownToMaskCode = new int[] { 0, 6, 8, 7, 5 };
+
+
     void Start(){
-        maincamera = GameObject.FindWithTag("MainCamera");
+        ResolveMainCamera();
 
         // actionrecord = GameObject.FindObjectOfType<ServerActionRecording>().GetComponent<ServerActionRecording>();
 
@@ -162,67 +175,211 @@ public class VRHostCameraControl : NetworkBehaviour
                 SyncBoxRotations.Add(Boxes[i].transform.rotation);
                 //Debug.Log(BoxPositions[i]);
             }
-            // Active the fps controller 
-            fpsSelect.SetActive(true);
-            // Active the mask controller 
-            maskSelect.SetActive(true);
-            // Active the RecordButton
-            recordStart.SetActive(true);
-            // Active the RecordText
-            recordTime.SetActive(true);
-            // Active the Border trigger
+            InitHostLikeUI();
+            // Active the Border trigger (server-only: ActiveBorder is [ClientRpc])
             border.SetActive(true);
-            // Initiate the fpsdropdown
-            dropdownfps = fpsSelect.GetComponent<TMP_Dropdown>();
-            // Initiate the maskdropdown
-            mask = maskSelect.GetComponent<TMP_Dropdown>();
-            // Initiate the recorddropdown
-            record = recordSelect.GetComponent<TMP_Dropdown>();
-
-            PreRotation = subcamera.transform.rotation;
-
-            PreRotationDot = subcamera.transform.rotation;
-
-            PreMainRotation = maincamera.transform.rotation;
-
-            PreMainRotationDot = maincamera.transform.rotation;
-            
-            masktype = mask.value;
-
-            // Update the Client fps for all clients by the choice of the server 
-            dropdownfps.onValueChanged.AddListener(delegate {
-                DropdownValueChanged(dropdownfps);
-            });
-
-            // Update the Client mask for all clients by the choice of the server 
-            mask.onValueChanged.AddListener(delegate {
-                masktype = mask.value;
-                UpdateClientMask(mask.value);
-            });
             border.GetComponent<Button>().onClick.AddListener(ActiveBorder);
         }
         if (isClient && !isServer) {
-            // Close the action control of the Client HMD
-            // maincamera.GetComponent<TrackedPoseDriver>().trackingType = TrackedPoseDriver.TrackingType.PositionOnly;
-            maincamera.GetComponent<TrackedPoseDriver>().enabled = false;
-            TempPosition = maincamera.transform.position;
-            TempRotation = maincamera.transform.rotation;
+            InitClientLikePlayback();
+        }
+    }
 
-            participantspos = new List<Vector3>();
-            participantsrot = new List<Quaternion>();
-            filePathpapos = Path.Combine(Application.dataPath, "RecordData", "PaPosData.json");
-            filePathparot = Path.Combine(Application.dataPath, "RecordData", "PaRotData.json");
-            var directoryPath = Path.GetDirectoryName(filePathpapos);
-            setting = new JsonSerializerSettings
+    private void InitHostLikeUI()
+    {
+        if (hostUiInitialized) { return; }
+        if (!ResolveMainCamera()) { return; }
+
+        // Capture once so SimpleMask can swap material in/out without losing the LimFov3 reference
+        // used by FullMask/FovOnly. Reading .material auto-instances; writes won't touch the asset.
+        if (Image_Mask1 != null && originalImageMask1Material == null)
+        {
+            var raw = Image_Mask1.GetComponent<RawImage>();
+            if (raw != null) { originalImageMask1Material = raw.material; }
+        }
+
+        // Capture maincamera's default bg color so SimpleMask can temporarily flip it to black
+        // (kills the blue leakage past Image_Mask1's quad) and other modes restore the default.
+        if (!mainCameraBgCaptured && maincamera != null)
+        {
+            var cam = maincamera.GetComponent<Camera>();
+            if (cam != null)
             {
-                ReferenceLoopHandling = ReferenceLoopHandling.Ignore
-            };
-            if (!Directory.Exists(directoryPath))
+                mainCameraDefaultBgColor = cam.backgroundColor;
+                mainCameraBgCaptured = true;
+            }
+        }
+
+        // Active the fps controller
+        fpsSelect.SetActive(true);
+        // Active the mask controller
+        maskSelect.SetActive(true);
+        // Active the RecordButton
+        recordStart.SetActive(true);
+        // Active the RecordText
+        recordTime.SetActive(true);
+        // Initiate the fpsdropdown
+        dropdownfps = fpsSelect.GetComponent<TMP_Dropdown>();
+        // Initiate the maskdropdown
+        mask = maskSelect.GetComponent<TMP_Dropdown>();
+        // Initiate the recorddropdown
+        record = recordSelect.GetComponent<TMP_Dropdown>();
+
+        PreRotation = subcamera.transform.rotation;
+        PreRotationDot = subcamera.transform.rotation;
+        PreMainRotation = maincamera.transform.rotation;
+        PreMainRotationDot = maincamera.transform.rotation;
+
+        masktype = DropdownIndexToMaskCode(mask.value);
+
+        dropdownfps.onValueChanged.AddListener(delegate {
+            DropdownValueChanged(dropdownfps);
+        });
+
+        mask.onValueChanged.AddListener(delegate {
+            int code = DropdownIndexToMaskCode(mask.value);
+            masktype = code;
+            if (localReplayMode)
             {
-                Directory.CreateDirectory(directoryPath);
+                ApplyMaskLocal(code);
+                // ApplyMaskLocal -> SetCameraToLimitFov(false) disables main TPD for
+                // mask 0/1/2/4/5. In idle state we need it back so the user can look around.
+                if (!play) { SetMainCameraTrackedPose(true); }
+            }
+            else
+            {
+                UpdateClientMask(code);
+            }
+        });
+        hostUiInitialized = true;
+    }
+
+    private int DropdownIndexToMaskCode(int idx)
+    {
+        if (idx < 0 || idx >= dropdownToMaskCode.Length) { return 0; }
+        return dropdownToMaskCode[idx];
+    }
+
+    private void InitClientLikePlayback()
+    {
+        if (!ResolveMainCamera()) { return; }
+
+        TrackedPoseDriver trackedPoseDriver = maincamera.GetComponent<TrackedPoseDriver>();
+        if (trackedPoseDriver != null)
+        {
+            trackedPoseDriver.enabled = false;
+        }
+        TempPosition = maincamera.transform.position;
+        TempRotation = maincamera.transform.rotation;
+
+        participantspos = new List<Vector3>();
+        participantsrot = new List<Quaternion>();
+        filePathpapos = Path.Combine(Application.dataPath, "RecordData", "PaPosData.json");
+        filePathparot = Path.Combine(Application.dataPath, "RecordData", "PaRotData.json");
+        var directoryPath = Path.GetDirectoryName(filePathpapos);
+        setting = new JsonSerializerSettings
+        {
+            ReferenceLoopHandling = ReferenceLoopHandling.Ignore
+        };
+        if (!Directory.Exists(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+    }
+
+    public void InitLocalReplay()
+    {
+        if (localReplayInitialized) { return; }
+
+        localReplayMode = true;
+        EnsureReplayTargetsActive();
+        InitClientLikePlayback();
+        // Idle state in local replay should let HMD drive the view; InitClientLikePlayback
+        // disabled the TrackedPoseDriver for real-client semantics, override that here.
+        SetMainCameraTrackedPose(true);
+        InitHostLikeUI();
+        // Hide record-only UI: recording is disabled in local replay mode (Toggle listener
+        // is registered only in the if(isServer) branch of ServerActionRecording).
+        if (recordStart != null) { recordStart.SetActive(false); }
+        if (recordTime != null) { recordTime.SetActive(false); }
+        localReplayInitialized = true;
+    }
+
+    private void SetMainCameraTrackedPose(bool enable)
+    {
+        if (!ResolveMainCamera()) { return; }
+        var tpd = maincamera.GetComponent<TrackedPoseDriver>();
+        if (tpd == null) { return; }
+        tpd.enabled = enable;
+        // SetCameraToLimitFov leaves trackingType at RotationOnly; restore full pose so
+        // idle local-replay users can both turn their head and walk freely.
+        if (enable)
+        {
+            tpd.trackingType = TrackedPoseDriver.TrackingType.RotationAndPosition;
+        }
+    }
+
+    private bool ResolveMainCamera()
+    {
+        if (maincamera != null) { return true; }
+
+        maincamera = GameObject.FindWithTag("MainCamera");
+        if (maincamera == null)
+        {
+            Debug.LogError("VRHostCameraControl: MainCamera-tagged object was not found.");
+            return false;
+        }
+        return true;
+    }
+
+    public void StopLocalReplay()
+    {
+        localReplayMode = false;
+        play = false;
+        index = 0;
+        SetMainCameraTrackedPose(true);
+    }
+
+    private void EnsureReplayTargetsActive()
+    {
+        ActivateObjectAndAncestors(gameObject);
+
+        if (Boxes != null)
+        {
+            for (int i = 0; i < Boxes.Count; i++)
+            {
+                ActivateObjectAndAncestors(Boxes[i]);
+            }
+        }
+
+        if (actionrecord != null && actionrecord.Boxtrasforms != null)
+        {
+            for (int i = 0; i < actionrecord.Boxtrasforms.Count; i++)
+            {
+                Transform boxTransform = actionrecord.Boxtrasforms[i];
+                if (boxTransform != null)
+                {
+                    ActivateObjectAndAncestors(boxTransform.gameObject);
+                }
             }
         }
     }
+
+    private static void ActivateObjectAndAncestors(GameObject target)
+    {
+        if (target == null) { return; }
+
+        Transform current = target.transform;
+        while (current != null)
+        {
+            if (!current.gameObject.activeSelf)
+            {
+                current.gameObject.SetActive(true);
+            }
+            current = current.parent;
+        }
+    }
+
     void Update()
     {
         if (isServer)
@@ -246,8 +403,36 @@ public class VRHostCameraControl : NetworkBehaviour
             ServerCenterRatation = Centerposition.rotation;
 
         }
-        if (isClient && !isServer) // Make sure the change is on clients
+        if ((isClient && !isServer) || localReplayMode) // playback runs on pure client OR local replay mode
         {
+            // In local replay mode there is no host syncing camera/box transforms.
+            // Stay idle until user clicks PlaytheRecord (sets play=true).
+            if (localReplayMode && !play)
+            {
+                // Sub/Fov cameras have RotationOnly TPDs; without an external position
+                // driver they would render from stale world positions (mask 4 fails to
+                // stereo-fuse, mask 5 peripheral view drifts outside the room). Mirror
+                // the HMD-driven maincamera position so both render the observer's view.
+                if (maincamera != null)
+                {
+                    Vector3 headPos = maincamera.transform.position;
+                    if ((masktype == 8 || masktype == 7 || masktype == 5) && subcamera != null && subcamera.activeInHierarchy)
+                    {
+                        subcamera.transform.position = headPos;
+                    }
+                    if (masktype == 4 && fovcamera != null && fovcamera.activeInHierarchy)
+                    {
+                        fovcamera.transform.position = headPos;
+                    }
+                }
+                return;
+            }
+            if (localReplayMode && (actionrecord == null || !actionrecord.HasReplayData))
+            {
+                play = false;
+                SetMainCameraTrackedPose(true);
+                return;
+            }
             //SyncBoxTransforms(Boxes);
             if (Time.time < nextFrameTime)
             {
@@ -255,14 +440,14 @@ public class VRHostCameraControl : NetworkBehaviour
                 if(masktype == 3){
                     subcamera.transform.position = TempPosition;
                     subcamera.transform.rotation = TempRotation;
-                    maincamera.transform.position = TempPosition; 
+                    maincamera.transform.position = TempPosition;
                     //maincamera.transform.rotation = syncedRotation;
-                }else if(masktype == 5){
-                    
+                }else if(masktype == 8 || masktype == 7 || masktype == 5){
+
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
-                    subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
-                    
+                    subcamera.transform.position = TempPosition;
+
                 }else{
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
@@ -281,21 +466,28 @@ public class VRHostCameraControl : NetworkBehaviour
                 //return;
                 
             }else{
-                if(play == true && actionrecord.NumOfRecords() > 0){
+                if(play == true && actionrecord != null && actionrecord.NumOfRecords() > 0){
                     // Control the action of the Clients' main camera by the data from the Server
                     TempPosition = actionrecord.GetCamerapositions(recordtype, index);
                     TempRotation = actionrecord.GetCamerarotations(recordtype, index);
                     TempBoxpositions = actionrecord.GetBoxpositions(recordtype, index);
                     TempBoxrotations = actionrecord.GetBoxrotations(recordtype, index);
+                    if (!HasCompleteBoxFrame(TempBoxpositions, TempBoxrotations))
+                    {
+                        Debug.LogWarning("LocalReplay: invalid box frame data, stopping playback.");
+                        play = false;
+                        if (localReplayMode) { SetMainCameraTrackedPose(true); }
+                        return;
+                    }
                     // Debug.Log(TempBoxpositions[14]);
                     if(masktype == 3){
                         subcamera.transform.position = TempPosition;
                         subcamera.transform.rotation = TempRotation;
                         maincamera.transform.position = TempPosition;
-                    }else if(masktype == 5){
+                    }else if(masktype == 8 || masktype == 7 || masktype == 5){
                         maincamera.transform.position = TempPosition;
                         maincamera.transform.rotation = TempRotation;
-                        subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
+                        subcamera.transform.position = TempPosition;
                     }
                     participantspos.Add(TempPosition);
                     participantsrot.Add(subcamera.transform.rotation);
@@ -309,18 +501,28 @@ public class VRHostCameraControl : NetworkBehaviour
                     // Centerposition.rotation = ServerCenterRatation;
 
                     // Read the record action data with the interval of fps
-                    index += (15 * frameRateInterval).ConvertTo<int>(); 
+                    index += ReplayFrameStep();
 
                     // If read all the action of one record, stop reading the record
                     if(index >= actionrecord.Numofactions(recordtype)){
                         index = 0;
-                        SavePaPosData(participantspos, filePathpapos);
-                        SavePaRotData(participantsrot, filePathparot);
+                        if (!localReplayMode)
+                        {
+                            SavePaPosData(participantspos, filePathpapos);
+                            SavePaRotData(participantsrot, filePathparot);
+                        }
                         participantspos = new List<Vector3>();
                         participantsrot = new List<Quaternion>();
                         play = false;
+                        if (localReplayMode) { SetMainCameraTrackedPose(true); }
                     }
                 }else{
+                    if (localReplayMode)
+                    {
+                        play = false;
+                        SetMainCameraTrackedPose(true);
+                        return;
+                    }
                     // Control the action of the Clients' VR origin by the data from the Server
                     // Centerposition.position = ServerCenterposition;
                     // Centerposition.rotation = ServerCenterRatation;
@@ -332,7 +534,7 @@ public class VRHostCameraControl : NetworkBehaviour
                         maincamera.transform.position = syncedPosition; 
                         //maincamera.transform.rotation = syncedRotation;
                     }
-                    else if(masktype == 5){
+                    else if(masktype == 8 || masktype == 7 || masktype == 5){
                         //ChangetheCenterAndAttach();
                         // Update the camera data
                         maincamera.transform.position = syncedPosition;
@@ -382,13 +584,16 @@ public class VRHostCameraControl : NetworkBehaviour
             }
             if(Time.time >= nextCenterTime){
                 nextCenterTime = Time.time + intervalForCenterChange;
-                if(masktype == 5){
+                // FovOnly + FullMask drive the central ellipse animation; PointOnly hides the
+                // ellipse RawImage so the size update would be wasted work.
+                if(masktype == 8 || masktype == 5){
                     ChangetheCenterSize();
                 }
             }
             if(Time.time >= nextDotTime){
                 nextDotTime = Time.time + intervalForDotChange;
-                if(masktype == 5){
+                // PointOnly + FullMask draw the moving dots; FovOnly intentionally omits them.
+                if(masktype == 7 || masktype == 5){
                     ChangetheDotPosition();
                 }
             }
@@ -676,62 +881,174 @@ public class VRHostCameraControl : NetworkBehaviour
     }
     // Play the record
     public void PlaytheRecord(){
-    
-        Rectherecordtype(record.value, true, 0);
+        if (localReplayMode)
+        {
+            if (record == null || actionrecord == null || !actionrecord.HasReplayData)
+            {
+                Debug.LogWarning("LocalReplay: no replay data loaded.");
+                return;
+            }
+
+            if (record.value < 0 || record.value >= actionrecord.NumOfRecords())
+            {
+                Debug.LogWarning("LocalReplay: selected record index is invalid.");
+                return;
+            }
+
+            recordtype = record.value;
+            play = true;
+            index = 0;
+            EnsureReplayTargetsActive();
+            // Playback owns the maincamera transform; let JSON drive it without HMD fighting it.
+            SetMainCameraTrackedPose(false);
+        }
+        else
+        {
+            Rectherecordtype(record.value, true, 0);
+        }
+    }
+
+    private int ReplayFrameStep()
+    {
+        return Mathf.Max(1, Mathf.RoundToInt(15.0f * frameRateInterval));
+    }
+
+    private bool HasCompleteBoxFrame(List<Vector3> positions, List<Quaternion> rotations)
+    {
+        int required = Boxes != null ? Boxes.Count : 0;
+        return required > 0 && positions != null && rotations != null &&
+            positions.Count >= required && rotations.Count >= required;
     }
     [ClientRpc]
     void UpdateClientMask(int type)
     {
         if (isClient && !isServer){
-            // Change the Mask of the Clients by the Choice Selected by the Server 
-            switch(type){
-                case 0:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(false);
-                    break;
-                case 1:
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov2(false);
-                    panel.GetComponent<Volume>().enabled = true;              
-                    break;
-                case 2:
-                    panel.GetComponent<Volume>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(false);
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = true;
-                    break;
-                case 3:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(false);
-                    SetCameraToLimitFov(true);
-                    break;
-                case 4:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov2(false);
-                    SetCameraToLimitFov1(true);
-                    break;
-                case 5:
-                    panel.GetComponent<Volume>().enabled = false;
-                    panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                    SetCameraToLimitFov(false);
-                    SetCameraToLimitFov1(false);
-                    SetCameraToLimitFov2(true);
-                    break;
-            default:
-                    break;
-            }
+            ApplyMaskLocal(type);
         }
-        
+    }
+
+    private void ApplyMaskLocal(int type)
+    {
+        // Reset maincamera bg to the captured default; case 6 overrides to black so SimpleMask's
+        // periphery beyond Image_Mask1's quad shows black instead of the default blue clear color.
+        if (mainCameraBgCaptured) { SetMainCameraBgColor(mainCameraDefaultBgColor); }
+
+        // ----- Cases below are ordered to match the MaskSelect dropdown (see dropdownToMaskCode).
+        // ----- Dropdown order: NoMask(0) → SimpleMask(6) → FovOnly(8) → PointOnly(7) → FullMask(5).
+        // ----- Legacy cases 1..4 are kept at the bottom — unreachable via the current dropdown
+        // ----- but preserved for future reuse / experiments.
+        switch(type){
+            // Dropdown index 0 — NoMask: no overlay, no FOV change.
+            case 0:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                break;
+            // Dropdown index 1 — SimpleMask: central clear ellipse + pure-black periphery on the
+            // Image_Mask1 quad. Reuses Image_Mask1 with simpleMaskMaterial whose shader mirrors
+            // TransparentCircle (Opaque + discard inside ellipse, opaque black outside) — same
+            // render path as FovOnly so the ellipse is geometrically identical and stereo-symmetric.
+            // No FOV change, no subcamera, no Vignette.
+            case 6:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                // SetCameraToLimitFov2(false) deactivates Image_Mask1; reactivate the GameObject.
+                Image_Mask1.SetActive(true);
+                SetImageMask1State(true, simpleMaskMaterial);
+                // Flip maincamera clear color to black so any area beyond Image_Mask1's quad
+                // (visible when the eye is close to the HMD lens) shows black, not the default blue.
+                SetMainCameraBgColor(Color.black);
+                break;
+            // Dropdown index 2 — FovOnly: same as FullMask but the dot drawing is gated off in Update().
+            case 8:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(true);
+                SetImageMask1State(true, originalImageMask1Material);
+                break;
+            // Dropdown index 3 — PointOnly: same dot system as FullMask, but no center ellipse and no FOV shrink.
+            case 7:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(true);
+                // Undo SetCameraToLimitFov2's FOV change so the main view is unaffected.
+                maincamera.GetComponent<Camera>().fieldOfView = 60f;
+                // Hide the central ellipse but keep the GameObject active so dot Images parented
+                // under it still render. Restore material so next swap to SimpleMask is clean.
+                SetImageMask1State(false, originalImageMask1Material);
+                break;
+            // Dropdown index 4 — FullMask: original mask 5 (LimitFov3) — central ellipse + dots + FOV shrink.
+            case 5:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(true);
+                // Restore RawImage (PointOnly disables it) and material (SimpleMask swaps it).
+                SetImageMask1State(true, originalImageMask1Material);
+                break;
+
+            // ----- Legacy: not surfaced by the current dropdown. -----
+            // Old MaskFull — full-screen URP Volume post-processing.
+            case 1:
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov2(false);
+                panel.GetComponent<Volume>().enabled = true;
+                break;
+            // Old MaskTrans — flat translucent overlay panel image.
+            case 2:
+                panel.GetComponent<Volume>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = true;
+                break;
+            // Old LimitFov — Image_Mask + main TPD set to RotationOnly.
+            case 3:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov1(false);
+                SetCameraToLimitFov2(false);
+                SetCameraToLimitFov(true);
+                break;
+            // Old LimitFov2 — fovcamera + camera rect crop (mono only).
+            case 4:
+                panel.GetComponent<Volume>().enabled = false;
+                panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
+                SetCameraToLimitFov(false);
+                SetCameraToLimitFov2(false);
+                SetCameraToLimitFov1(true);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void SetImageMask1State(bool rawEnabled, Material material)
+    {
+        if (Image_Mask1 == null) { return; }
+        var raw = Image_Mask1.GetComponent<RawImage>();
+        if (raw == null) { return; }
+        raw.enabled = rawEnabled;
+        if (material != null) { raw.material = material; }
+    }
+
+    private void SetMainCameraBgColor(Color color)
+    {
+        if (maincamera == null) { return; }
+        var cam = maincamera.GetComponent<Camera>();
+        if (cam != null) { cam.backgroundColor = color; }
     }
     void SetCameraToLimitFov(bool flag){
         //subcamera.SetActive(flag);
@@ -743,14 +1060,24 @@ public class VRHostCameraControl : NetworkBehaviour
     }
     void SetCameraToLimitFov1(bool flag){
         fovcamera.SetActive(flag);
+        var cam = maincamera.GetComponent<Camera>();
+        // Camera.rect under XR single-pass stereo applies viewport cropping per eye without
+        // adjusting the per-eye projection matrix, so left/right diverge and fail to fuse.
+        // Combined with mismatched FOV (38.3 vs fovcamera's 60), the central/peripheral
+        // stereo cues conflict. Skip the rect/FOV change when stereo is active and keep the
+        // legacy mono behavior for non-stereo (e.g. ParrelSync client without HMD).
+        bool stereoActive = UnityEngine.XR.XRSettings.enabled
+                            && UnityEngine.XR.XRSettings.isDeviceActive;
         if(flag){
-            maincamera.GetComponent<Camera>().rect = new Rect(0.2f, 0.2f, 0.6f, 0.6f);
-            maincamera.GetComponent<Camera>().fieldOfView = 38.3f;
+            if(!stereoActive){
+                cam.rect = new Rect(0.2f, 0.2f, 0.6f, 0.6f);
+                cam.fieldOfView = 38.3f;
+            }
         }else{
-            maincamera.GetComponent<Camera>().rect = new Rect(0.0f, 0.0f, 1.0f, 1.0f);
-            maincamera.GetComponent<Camera>().fieldOfView = 60f;
+            cam.rect = new Rect(0.0f, 0.0f, 1.0f, 1.0f);
+            cam.fieldOfView = 60f;
         }
-        
+
     }
     void SetCameraToLimitFov2(bool flag){
         Image_Mask1.SetActive(flag);
