@@ -25,8 +25,7 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _RadiusX: 0.048
-    - _RadiusY: 0.038
-    - _FadeWidth: 0.07
+    - _RadiusX: 0.24
+    - _RadiusY: 0.19
     m_Colors: []
   m_BuildTextureStacks: []

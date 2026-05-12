@@ -21,8 +21,11 @@ public class VRHostCameraControl : NetworkBehaviour
     public GameObject fovcamera;
     public GameObject Image_Mask;
     public GameObject Image_Mask1;
-    public GameObject Image_Mask_Simple;
     public GameObject White_Circle;
+    public Material simpleMaskMaterial;
+    private Material originalImageMask1Material;
+    private Color mainCameraDefaultBgColor;
+    private bool mainCameraBgCaptured;
     public GameObject fpsSelect;
     public GameObject maskSelect;
     public GameObject recordStart;
@@ -186,6 +189,26 @@ public class VRHostCameraControl : NetworkBehaviour
     {
         if (hostUiInitialized) { return; }
         if (!ResolveMainCamera()) { return; }
+
+        // Capture once so SimpleMask can swap material in/out without losing the LimFov3 reference
+        // used by FullMask/FovOnly. Reading .material auto-instances; writes won't touch the asset.
+        if (Image_Mask1 != null && originalImageMask1Material == null)
+        {
+            var raw = Image_Mask1.GetComponent<RawImage>();
+            if (raw != null) { originalImageMask1Material = raw.material; }
+        }
+
+        // Capture maincamera's default bg color so SimpleMask can temporarily flip it to black
+        // (kills the blue leakage past Image_Mask1's quad) and other modes restore the default.
+        if (!mainCameraBgCaptured && maincamera != null)
+        {
+            var cam = maincamera.GetComponent<Camera>();
+            if (cam != null)
+            {
+                mainCameraDefaultBgColor = cam.backgroundColor;
+                mainCameraBgCaptured = true;
+            }
+        }
 
         // Active the fps controller
         fpsSelect.SetActive(true);
@@ -906,9 +929,9 @@ public class VRHostCameraControl : NetworkBehaviour
 
     private void ApplyMaskLocal(int type)
     {
-        // SimpleMask uses Image_Mask_Simple; clear it on every switch so it never leaks
-        // into another mode that doesn't own it.
-        if (Image_Mask_Simple != null) { Image_Mask_Simple.SetActive(false); }
+        // Reset maincamera bg to the captured default; case 6 overrides to black so SimpleMask's
+        // periphery beyond Image_Mask1's quad shows black instead of the default blue clear color.
+        if (mainCameraBgCaptured) { SetMainCameraBgColor(mainCameraDefaultBgColor); }
 
         // ----- Cases below are ordered to match the MaskSelect dropdown (see dropdownToMaskCode).
         // ----- Dropdown order: NoMask(0) → SimpleMask(6) → FovOnly(8) → PointOnly(7) → FullMask(5).
@@ -923,23 +946,32 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetCameraToLimitFov1(false);
                 SetCameraToLimitFov2(false);
                 break;
-            // Dropdown index 1 — SimpleMask: static elliptical gradient, no FOV change, no dots, no animation.
+            // Dropdown index 1 — SimpleMask: central clear ellipse + pure-black periphery on the
+            // Image_Mask1 quad. Reuses Image_Mask1 with simpleMaskMaterial whose shader mirrors
+            // TransparentCircle (Opaque + discard inside ellipse, opaque black outside) — same
+            // render path as FovOnly so the ellipse is geometrically identical and stereo-symmetric.
+            // No FOV change, no subcamera, no Vignette.
             case 6:
                 panel.GetComponent<Volume>().enabled = false;
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
                 SetCameraToLimitFov(false);
                 SetCameraToLimitFov1(false);
                 SetCameraToLimitFov2(false);
-                if (Image_Mask_Simple != null) { Image_Mask_Simple.SetActive(true); }
+                // SetCameraToLimitFov2(false) deactivates Image_Mask1; reactivate the GameObject.
+                Image_Mask1.SetActive(true);
+                SetImageMask1State(true, simpleMaskMaterial);
+                // Flip maincamera clear color to black so any area beyond Image_Mask1's quad
+                // (visible when the eye is close to the HMD lens) shows black, not the default blue.
+                SetMainCameraBgColor(Color.black);
                 break;
             // Dropdown index 2 — FovOnly: same as FullMask but the dot drawing is gated off in Update().
             case 8:
                 panel.GetComponent<Volume>().enabled = false;
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                RestoreImageMask1Raw();
                 SetCameraToLimitFov(false);
                 SetCameraToLimitFov1(false);
                 SetCameraToLimitFov2(true);
+                SetImageMask1State(true, originalImageMask1Material);
                 break;
             // Dropdown index 3 — PointOnly: same dot system as FullMask, but no center ellipse and no FOV shrink.
             case 7:
@@ -950,22 +982,19 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetCameraToLimitFov2(true);
                 // Undo SetCameraToLimitFov2's FOV change so the main view is unaffected.
                 maincamera.GetComponent<Camera>().fieldOfView = 60f;
-                // Hide the central ellipse mask but keep the GameObject active so the
-                // instantiated dot Images can still render under it.
-                {
-                    var mask1Raw = Image_Mask1.GetComponent<RawImage>();
-                    if (mask1Raw != null) { mask1Raw.enabled = false; }
-                }
+                // Hide the central ellipse but keep the GameObject active so dot Images parented
+                // under it still render. Restore material so next swap to SimpleMask is clean.
+                SetImageMask1State(false, originalImageMask1Material);
                 break;
             // Dropdown index 4 — FullMask: original mask 5 (LimitFov3) — central ellipse + dots + FOV shrink.
             case 5:
                 panel.GetComponent<Volume>().enabled = false;
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
-                // PointOnly (case 7) disables Image_Mask1's RawImage; FullMask must restore it.
-                RestoreImageMask1Raw();
                 SetCameraToLimitFov(false);
                 SetCameraToLimitFov1(false);
                 SetCameraToLimitFov2(true);
+                // Restore RawImage (PointOnly disables it) and material (SimpleMask swaps it).
+                SetImageMask1State(true, originalImageMask1Material);
                 break;
 
             // ----- Legacy: not surfaced by the current dropdown. -----
@@ -1006,11 +1035,20 @@ public class VRHostCameraControl : NetworkBehaviour
         }
     }
 
-    private void RestoreImageMask1Raw()
+    private void SetImageMask1State(bool rawEnabled, Material material)
     {
         if (Image_Mask1 == null) { return; }
         var raw = Image_Mask1.GetComponent<RawImage>();
-        if (raw != null && !raw.enabled) { raw.enabled = true; }
+        if (raw == null) { return; }
+        raw.enabled = rawEnabled;
+        if (material != null) { raw.material = material; }
+    }
+
+    private void SetMainCameraBgColor(Color color)
+    {
+        if (maincamera == null) { return; }
+        var cam = maincamera.GetComponent<Camera>();
+        if (cam != null) { cam.backgroundColor = color; }
     }
     void SetCameraToLimitFov(bool flag){
         //subcamera.SetActive(flag);
