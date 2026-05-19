@@ -36,6 +36,12 @@ public class VRHostCameraControl : NetworkBehaviour
     public GameObject RightHand;
     public GameObject Mark;
     public GameObject Box15;
+    // Center-screen "playback completed" panel; assigned in scene, child of main Canvas.
+    public GameObject replayCompletedText;
+    // Captured at the start of each playback so subsequent restores honor the user's pre-playback layout.
+    private bool leftHandActiveBeforePlay;
+    private bool rightHandActiveBeforePlay;
+    private bool replayHudHiddenForPlay;
     
     public List<GameObject> Boxes = new List<GameObject>();
     private TMP_Dropdown dropdownfps;
@@ -302,6 +308,9 @@ public class VRHostCameraControl : NetworkBehaviour
         // is registered only in the if(isServer) branch of ServerActionRecording).
         if (recordStart != null) { recordStart.SetActive(false); }
         if (recordTime != null) { recordTime.SetActive(false); }
+        // Author-time stray "active" state on the completion panel would otherwise show before
+        // the user has even played anything.
+        if (replayCompletedText != null) { replayCompletedText.SetActive(false); }
         localReplayInitialized = true;
     }
 
@@ -431,6 +440,7 @@ public class VRHostCameraControl : NetworkBehaviour
             {
                 play = false;
                 SetMainCameraTrackedPose(true);
+                OnLocalReplayEnded(false);
                 return;
             }
             //SyncBoxTransforms(Boxes);
@@ -476,7 +486,11 @@ public class VRHostCameraControl : NetworkBehaviour
                     {
                         Debug.LogWarning("LocalReplay: invalid box frame data, stopping playback.");
                         play = false;
-                        if (localReplayMode) { SetMainCameraTrackedPose(true); }
+                        if (localReplayMode)
+                        {
+                            SetMainCameraTrackedPose(true);
+                            OnLocalReplayEnded(false);
+                        }
                         return;
                     }
                     // Debug.Log(TempBoxpositions[14]);
@@ -514,13 +528,18 @@ public class VRHostCameraControl : NetworkBehaviour
                         participantspos = new List<Vector3>();
                         participantsrot = new List<Quaternion>();
                         play = false;
-                        if (localReplayMode) { SetMainCameraTrackedPose(true); }
+                        if (localReplayMode)
+                        {
+                            SetMainCameraTrackedPose(true);
+                            OnLocalReplayEnded(true);
+                        }
                     }
                 }else{
                     if (localReplayMode)
                     {
                         play = false;
                         SetMainCameraTrackedPose(true);
+                        OnLocalReplayEnded(false);
                         return;
                     }
                     // Control the action of the Clients' VR origin by the data from the Server
@@ -879,6 +898,40 @@ public class VRHostCameraControl : NetworkBehaviour
             //fpsText.text = $"{fps:0.} fps";
         }
     }
+    // Hide / restore the floating UI (FPS / Mask / Record dropdowns) during local replay playback.
+    // Idempotent: re-entry is safe.
+    private void SetReplayHudVisible(bool visible)
+    {
+        if (fpsSelect    != null) { fpsSelect.SetActive(visible); }
+        if (maskSelect   != null) { maskSelect.SetActive(visible); }
+        if (recordSelect != null) { recordSelect.SetActive(visible); }
+    }
+
+    // Toggle observer's XR controllers. SetActive(false) takes down ray + line visual + interactor
+    // in one shot without reaching into the nested XR Origin prefab.
+    private void SetObserverControllersVisible(bool visible)
+    {
+        if (LeftHand  != null) { LeftHand .SetActive(visible ? leftHandActiveBeforePlay  : false); }
+        if (RightHand != null) { RightHand.SetActive(visible ? rightHandActiveBeforePlay : false); }
+    }
+
+    // Single end-of-playback handler. Called from the natural completion path AND every
+    // early-bail-out branch so the HUD always recovers when `play` transitions true -> false.
+    private void OnLocalReplayEnded(bool showCompletedMessage)
+    {
+        if (!localReplayMode) { return; }
+        if (replayHudHiddenForPlay)
+        {
+            SetReplayHudVisible(true);
+            SetObserverControllersVisible(true);
+            replayHudHiddenForPlay = false;
+        }
+        if (showCompletedMessage && replayCompletedText != null)
+        {
+            replayCompletedText.SetActive(true);
+        }
+    }
+
     // Play the record
     public void PlaytheRecord(){
         if (localReplayMode)
@@ -898,6 +951,16 @@ public class VRHostCameraControl : NetworkBehaviour
             recordtype = record.value;
             play = true;
             index = 0;
+
+            // Snapshot controller state once so SetObserverControllersVisible(true) later honors
+            // whatever the user (or mask code) had configured before playback started.
+            leftHandActiveBeforePlay  = LeftHand  != null && LeftHand.activeSelf;
+            rightHandActiveBeforePlay = RightHand != null && RightHand.activeSelf;
+            SetReplayHudVisible(false);
+            SetObserverControllersVisible(false);
+            replayHudHiddenForPlay = true;
+            if (replayCompletedText != null) { replayCompletedText.SetActive(false); }
+
             EnsureReplayTargetsActive();
             // Playback owns the maincamera transform; let JSON drive it without HMD fighting it.
             SetMainCameraTrackedPose(false);
