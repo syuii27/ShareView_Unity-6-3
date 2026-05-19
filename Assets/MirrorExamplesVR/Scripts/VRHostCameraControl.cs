@@ -24,6 +24,7 @@ public class VRHostCameraControl : NetworkBehaviour
     public GameObject White_Circle;
     public Material simpleMaskMaterial;
     private Material originalImageMask1Material;
+    private Material whiteCircleRuntimeMaterial;
     private Color mainCameraDefaultBgColor;
     private bool mainCameraBgCaptured;
     public GameObject fpsSelect;
@@ -138,6 +139,7 @@ public class VRHostCameraControl : NetworkBehaviour
 
     void Start(){
         ResolveMainCamera();
+        EnsureRuntimeMaskMaterials();
 
         // actionrecord = GameObject.FindObjectOfType<ServerActionRecording>().GetComponent<ServerActionRecording>();
 
@@ -191,18 +193,44 @@ public class VRHostCameraControl : NetworkBehaviour
         }
     }
 
+    // RawImage.material does NOT auto-instance like Renderer.material — it returns the shared
+    // .mat asset directly. ChangetheCenterSize calls SetFloat on these two materials every
+    // frame in masktype 5/8, which would otherwise serialize residual _RadiusX/_RadiusY drift
+    // back to LimFov3.mat / WhiteCircle.mat on disk after every Play session.
+    // The cached originalImageMask1Material is also the material ApplyMaskLocal restores when
+    // swapping out of SimpleMask, so cloning that one reference covers all swap paths.
+    private void EnsureRuntimeMaskMaterials()
+    {
+        if (Image_Mask1 != null && originalImageMask1Material == null)
+        {
+            var raw = Image_Mask1.GetComponent<RawImage>();
+            if (raw != null && raw.material != null)
+            {
+                originalImageMask1Material = new Material(raw.material);
+                raw.material = originalImageMask1Material;
+            }
+        }
+        if (White_Circle != null && whiteCircleRuntimeMaterial == null)
+        {
+            var raw = White_Circle.GetComponent<RawImage>();
+            if (raw != null && raw.material != null)
+            {
+                whiteCircleRuntimeMaterial = new Material(raw.material);
+                raw.material = whiteCircleRuntimeMaterial;
+            }
+        }
+    }
+
+    void OnDestroy()
+    {
+        if (originalImageMask1Material != null) { Destroy(originalImageMask1Material); }
+        if (whiteCircleRuntimeMaterial != null) { Destroy(whiteCircleRuntimeMaterial); }
+    }
+
     private void InitHostLikeUI()
     {
         if (hostUiInitialized) { return; }
         if (!ResolveMainCamera()) { return; }
-
-        // Capture once so SimpleMask can swap material in/out without losing the LimFov3 reference
-        // used by FullMask/FovOnly. Reading .material auto-instances; writes won't touch the asset.
-        if (Image_Mask1 != null && originalImageMask1Material == null)
-        {
-            var raw = Image_Mask1.GetComponent<RawImage>();
-            if (raw != null) { originalImageMask1Material = raw.material; }
-        }
 
         // Capture maincamera's default bg color so SimpleMask can temporarily flip it to black
         // (kills the blue leakage past Image_Mask1's quad) and other modes restore the default.
