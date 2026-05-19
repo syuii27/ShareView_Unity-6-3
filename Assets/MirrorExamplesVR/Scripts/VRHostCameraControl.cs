@@ -456,7 +456,7 @@ public class VRHostCameraControl : NetworkBehaviour
 
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
-                    subcamera.transform.position = TempPosition;
+                    subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
 
                 }else{
                     maincamera.transform.position = TempPosition;
@@ -501,7 +501,7 @@ public class VRHostCameraControl : NetworkBehaviour
                     }else if(masktype == 8 || masktype == 7 || masktype == 5){
                         maincamera.transform.position = TempPosition;
                         maincamera.transform.rotation = TempRotation;
-                        subcamera.transform.position = TempPosition;
+                        subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
                     }
                     participantspos.Add(TempPosition);
                     participantsrot.Add(subcamera.transform.rotation);
