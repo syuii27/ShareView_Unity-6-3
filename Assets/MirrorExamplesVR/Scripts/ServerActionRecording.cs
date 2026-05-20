@@ -52,7 +52,9 @@ public class ServerActionRecording : NetworkBehaviour
     private List<List<List<Quaternion>>> Boxrotations;
     //[SyncVar]
     //private bool SynisRecording;
-    
+
+    // StreamingAssets is the only Assets/ subtree Unity bundles verbatim into a Player build.
+    private static string ReplayReadRoot => Path.Combine(Application.streamingAssetsPath, "RecordData");
 
     void Start()
     {
@@ -111,16 +113,21 @@ public class ServerActionRecording : NetworkBehaviour
         }
 
         InitClientLikeData();
+        // Read from StreamingAssets; filePath* stay on dataPath so SyncData writes don't move.
+        string readMP = Path.Combine(ReplayReadRoot, "MainPosData.json");
+        string readMR = Path.Combine(ReplayReadRoot, "MainRotData.json");
+        string readBP = Path.Combine(ReplayReadRoot, "BoxPosData.json");
+        string readBR = Path.Combine(ReplayReadRoot, "BoxRotData.json");
         record = recordSelect.GetComponent<TMP_Dropdown>();
         record.ClearOptions();
         countRecord = 0;
-        positionrecords = LoadMPData(filePathp);
+        positionrecords = LoadMPData(readMP);
         int num = NumOfRecords();
         if (num > 0)
         {
-            rotationrecords = LoadMRData(filePathr);
-            SynBoxpositions = LoadBPData(filePathboxp);
-            SynBoxrotations = LoadBRData(filePathboxr);
+            rotationrecords = LoadMRData(readMR);
+            SynBoxpositions = LoadBPData(readBP);
+            SynBoxrotations = LoadBRData(readBR);
             recordSelect.SetActive(true);
             for (int i = 0; i < num; i++)
             {
@@ -129,11 +136,10 @@ public class ServerActionRecording : NetworkBehaviour
             }
             record.value = 0;
             record.RefreshShownValue();
-            // Debug.Log("LocalReplay: loaded " + num + " records from " + filePathp);
         }
         else
         {
-            Debug.LogWarning("LocalReplay: no records found at " + filePathp);
+            Debug.LogWarning("LocalReplay: no records found at " + readMP);
         }
         localReplayInitialized = true;
     }

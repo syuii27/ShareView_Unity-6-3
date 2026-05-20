@@ -19,6 +19,8 @@
 
 # Runtime/generated record data can be very large and should stay local.
 /[Aa]ssets/[Rr]ecord[Dd]ata/
+# Same rule for the build-bundled copy (StreamingAssets is auto-copied into Player builds).
+/[Aa]ssets/[Ss]treaming[Aa]ssets/[Rr]ecord[Dd]ata/
 
 # Uncomment this line if you wish to ignore the asset store tools plugin
 # /[Aa]ssets/AssetStoreTools*
