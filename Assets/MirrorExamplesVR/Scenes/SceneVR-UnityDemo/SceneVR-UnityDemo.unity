@@ -30833,7 +30833,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Replay Ended
+  m_text: Ended
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -30855,7 +30855,7 @@ MonoBehaviour:
   m_spriteAsset: {fileID: 0}
   m_tintAllSprites: 0
   m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: -1183493901
+  m_TextStyleHashCode: 97690656
   m_overrideHtmlColors: 0
   m_faceColor:
     serializedVersion: 2
@@ -39242,6 +39242,8 @@ MonoBehaviour:
   Boxes:
   - {fileID: 387364091883039441}
   fpsText: {fileID: 217963130}
+  defaultReplayFpsDropdownIndex: 2
+  defaultReplayMaskDropdownIndex: 0
   Centerposition: {fileID: 1731298986}
   actionrecord: {fileID: 0}
   lineImagePrefab: {fileID: 541233168}
@@ -65144,6 +65146,8 @@ MonoBehaviour:
   - {fileID: 475652893}
   - {fileID: 1032703430}
   fpsText: {fileID: 217963130}
+  defaultReplayFpsDropdownIndex: 2
+  defaultReplayMaskDropdownIndex: 0
   Centerposition: {fileID: 1731298986}
   actionrecord: {fileID: 6559198439968760676}
   lineImagePrefab: {fileID: 541233168}

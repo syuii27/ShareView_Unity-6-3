@@ -6,6 +6,9 @@ using UnityEngine.UI;
 using Mirror.Discovery;
 using TMPro;
 using UnityEngine.SceneManagement;
+using UnityEngine.InputSystem;   // Keyboard (PC-side fallback for the A/B replay controls).
+                                 // UnityEngine.XR.* is fully-qualified below to avoid the
+                                 // CommonUsages name clash between XR and InputSystem.
 
 public class VRCanvasHUD : MonoBehaviour
 {
@@ -23,6 +26,8 @@ public class VRCanvasHUD : MonoBehaviour
     public VRHostCameraControl hostCamera;
     public Text infoText;
     private bool localReplayStarted;
+    // Edge-detection state for the right-controller A/B replay shortcuts.
+    private bool prevAButton, prevBButton;
     // legacy inputfield interaction does not auto bring up a keyboard on headset builds, use tmp.
     public TMP_InputField inputFieldAddress, inputFieldPlayerName;
 
@@ -164,6 +169,40 @@ public class VRCanvasHUD : MonoBehaviour
             return;
         }
         StartCoroutine(LocalReplayCoroutine());
+    }
+
+    // Right-controller shortcuts so the operator can drive local replay from the PC screen without
+    // ray-pointing at the world-space UI. We read the physical device directly (independent of whether
+    // the RightHand interactor GameObject is active), and mirror A/B on the keyboard as a PC fallback
+    // that also lets the whole flow be exercised in the Editor without a headset.
+    private void PollReplayControllerButtons()
+    {
+        var rightHand = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.RightHand);
+        bool aDown = false, bDown = false;
+        rightHand.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primaryButton,   out aDown); // A
+        rightHand.TryGetFeatureValue(UnityEngine.XR.CommonUsages.secondaryButton, out bDown); // B
+
+        var kb = Keyboard.current;
+        bool aEdge = (aDown && !prevAButton) || (kb != null && kb.aKey.wasPressedThisFrame);
+        bool bEdge = (bDown && !prevBButton) || (kb != null && kb.bKey.wasPressedThisFrame);
+        prevAButton = aDown;
+        prevBButton = bDown;
+
+        if (aEdge) { OnReplayInitButton(); }
+        if (bEdge) { OnReplayPlayButton(); }
+    }
+
+    // A: not in replay yet -> enter & initialize; already in replay and idle -> recenter to frame 0.
+    private void OnReplayInitButton()
+    {
+        if (!localReplayStarted) { ButtonLocalReplay(); }
+        else if (hostCamera != null && !hostCamera.IsReplayPlaying) { hostCamera.SyncToRecordStart(); }
+    }
+
+    // B: in replay -> start playing Record 1.
+    private void OnReplayPlayButton()
+    {
+        if (localReplayStarted && hostCamera != null) { hostCamera.PlaytheRecord(); }
     }
 
     private IEnumerator LocalReplayCoroutine()
@@ -361,6 +400,7 @@ public class VRCanvasHUD : MonoBehaviour
 
     private void Update()
     {
+        PollReplayControllerButtons();
         if (TouchScreenKeyboard.isSupported && keyboard != null && keyboard.active && keyboard.text != "")
         {
             if (keyboardStatus == 1)

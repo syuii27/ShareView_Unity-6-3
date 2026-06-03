@@ -47,6 +47,10 @@ public class VRHostCameraControl : NetworkBehaviour
     public List<GameObject> Boxes = new List<GameObject>();
     private TMP_Dropdown dropdownfps;
     public TMP_Text fpsText;
+    [Header("Local Replay defaults")]
+    // Per-build defaults applied when entering local replay (see InitLocalReplay).
+    public int defaultReplayFpsDropdownIndex = 2;   // fps dropdown index 2 = "15FPS"
+    public int defaultReplayMaskDropdownIndex = 0;  // mask dropdown: 0=NoMask, 3=PointOnly (set per build)
     private TMP_Dropdown mask;
     private TMP_Dropdown record;
     // The start time to count the current fps
@@ -66,6 +70,8 @@ public class VRHostCameraControl : NetworkBehaviour
     private int index = 0;
     // Check the condition of the record selected
     private bool play = false;
+    // Read-only view of playback state so the HUD can gate the A-button recenter while playing.
+    public bool IsReplayPlaying => play;
     private static int sizeOfPoints = 8;
     private List<Vector3> starts = new List<Vector3>(sizeOfPoints);
     private List<Vector3> ends = new List<Vector3>(sizeOfPoints);
@@ -343,6 +349,24 @@ public class VRHostCameraControl : NetworkBehaviour
         // Author-time stray "active" state on the completion panel would otherwise show before
         // the user has even played anything.
         if (replayCompletedText != null) { replayCompletedText.SetActive(false); }
+        // Apply the per-build local-replay defaults: fps ("15FPS") and mask (NoMask / PointOnly).
+        // Call the handlers directly instead of relying on the dropdown onValueChanged listeners,
+        // which do not fire when the assigned value equals the current one (e.g. default NoMask).
+        if (dropdownfps != null)
+        {
+            dropdownfps.value = defaultReplayFpsDropdownIndex;
+            dropdownfps.RefreshShownValue();
+            DropdownValueChanged(dropdownfps);
+        }
+        if (mask != null)
+        {
+            mask.value = defaultReplayMaskDropdownIndex;
+            mask.RefreshShownValue();
+            masktype = DropdownIndexToMaskCode(mask.value);
+            ApplyMaskLocal(masktype);
+            // ApplyMaskLocal can disable the main TPD; in idle state restore it so the HMD can look around.
+            if (!play) { SetMainCameraTrackedPose(true); }
+        }
         // Align the live observer view to the default record's first frame right away, so the
         // first play has no drift. Data is already loaded (ServerActionRecording.InitLocalReplay
         // ran first in LocalReplayCoroutine) and record.value defaults to 0.
@@ -945,7 +969,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 frameRateInterval = 1.0f / 5.0f;
                 break;
             case 2:
-                frameRateInterval = 1.0f / 17.0f;
+                 frameRateInterval = 1.0f / 17.0f;
                 break;
             case 3:
                 frameRateInterval = 1.0f / 25.0f;
