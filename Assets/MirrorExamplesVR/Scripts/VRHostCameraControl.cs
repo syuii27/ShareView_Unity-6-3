@@ -136,6 +136,10 @@ public class VRHostCameraControl : NetworkBehaviour
     // Keep legacy codes 1..4 reachable: re-add an entry here to surface them again.
     private readonly int[] dropdownToMaskCode = new int[] { 0, 6, 8, 7, 5 };
 
+    // Translation from the recorded/main-camera world position to the Sub Camera's
+    // position inside the duplicate ("similar") room used for the peripheral view.
+    private static readonly Vector3 SubCameraRoomOffset = new Vector3(6.5f, 0f, 42f);
+
 
     void Start(){
         ResolveMainCamera();
@@ -339,6 +343,10 @@ public class VRHostCameraControl : NetworkBehaviour
         // Author-time stray "active" state on the completion panel would otherwise show before
         // the user has even played anything.
         if (replayCompletedText != null) { replayCompletedText.SetActive(false); }
+        // Align the live observer view to the default record's first frame right away, so the
+        // first play has no drift. Data is already loaded (ServerActionRecording.InitLocalReplay
+        // ran first in LocalReplayCoroutine) and record.value defaults to 0.
+        SyncToRecordStart();
         localReplayInitialized = true;
     }
 
@@ -446,16 +454,19 @@ public class VRHostCameraControl : NetworkBehaviour
             // Stay idle until user clicks PlaytheRecord (sets play=true).
             if (localReplayMode && !play)
             {
-                // Sub/Fov cameras have RotationOnly TPDs; without an external position
-                // driver they would render from stale world positions (mask 4 fails to
-                // stereo-fuse, mask 5 peripheral view drifts outside the room). Mirror
-                // the HMD-driven maincamera position so both render the observer's view.
+                // Sub/Fov cameras have RotationOnly TPDs; without an external position driver
+                // they would render from stale world positions. Drive them from the live head
+                // so the idle preview already matches what playback will show (no jump on play):
+                //  - Sub Camera (masks 5/7/8) renders the duplicate ("similar") room the observer
+                //    belongs to, so it sits at head + SubCameraRoomOffset — the very offset
+                //    playback applies. The translation into the other room is intentional.
+                //  - fovcamera (legacy mask 4) shares the main room, so it mirrors the head directly.
                 if (maincamera != null)
                 {
                     Vector3 headPos = maincamera.transform.position;
                     if ((masktype == 8 || masktype == 7 || masktype == 5) && subcamera != null && subcamera.activeInHierarchy)
                     {
-                        subcamera.transform.position = headPos;
+                        subcamera.transform.position = headPos + SubCameraRoomOffset;
                     }
                     if (masktype == 4 && fovcamera != null && fovcamera.activeInHierarchy)
                     {
@@ -484,7 +495,7 @@ public class VRHostCameraControl : NetworkBehaviour
 
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
-                    subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
+                    subcamera.transform.position = TempPosition + SubCameraRoomOffset;
 
                 }else{
                     maincamera.transform.position = TempPosition;
@@ -529,7 +540,7 @@ public class VRHostCameraControl : NetworkBehaviour
                     }else if(masktype == 8 || masktype == 7 || masktype == 5){
                         maincamera.transform.position = TempPosition;
                         maincamera.transform.rotation = TempRotation;
-                        subcamera.transform.position = new Vector3(TempPosition.x + 6.5f, TempPosition.y, TempPosition.z + 42f);
+                        subcamera.transform.position = TempPosition + SubCameraRoomOffset;
                     }
                     participantspos.Add(TempPosition);
                     participantsrot.Add(subcamera.transform.rotation);
@@ -590,7 +601,7 @@ public class VRHostCameraControl : NetworkBehaviour
                         // Update the camera data
                         maincamera.transform.position = syncedPosition;
                         maincamera.transform.rotation = syncedRotation;
-                        subcamera.transform.position = new Vector3(syncedPosition.x + 6.5f, syncedPosition.y, syncedPosition.z + 42f);
+                        subcamera.transform.position = syncedPosition + SubCameraRoomOffset;
                     }
                     for(int i = 0; i < 30; i++){
                         
@@ -1032,6 +1043,51 @@ public class VRHostCameraControl : NetworkBehaviour
         {
             Rectherecordtype(record.value, true, 0);
         }
+    }
+
+    // Re-aligns the live (HMD-driven) observer view to the selected record's first frame so
+    // pressing play continues from where the view already is, instead of snapping to frame 0.
+    //
+    // Local-replay only. Keeps the TrackedPoseDriver enabled (the user can still look around):
+    // we recenter the whole rig (Centerposition / XR Origin) rather than freezing the camera.
+    // Only yaw + position are matched — pitch/roll are left as the user's real head so the
+    // horizon never tilts; any residual jump at play start equals the pitch/head-motion gap.
+    //
+    // Public so a future controller button can trigger "enter replay + sync" in one press.
+    public void SyncToRecordStart()
+    {
+        if (!localReplayMode || record == null || actionrecord == null || !actionrecord.HasReplayData) { return; }
+
+        int rt = record.value;
+        if (rt < 0 || rt >= actionrecord.NumOfRecords() || actionrecord.Numofactions(rt) <= 0) { return; }
+        if (!ResolveMainCamera() || Centerposition == null) { return; }
+
+        Vector3 targetPos = actionrecord.GetCamerapositions(rt, 0);
+        Quaternion targetRot = actionrecord.GetCamerarotations(rt, 0);
+
+        // Current live head pose (TPD stays on; world pose = rig * HMD).
+        Quaternion camRot = maincamera.transform.rotation;
+        Vector3 camPos = maincamera.transform.position;
+
+        // Yaw-only alignment: rotate the rig about the user's current head position so the
+        // recentered view faces the recorded heading without tilting pitch/roll.
+        Vector3 camFwd = Vector3.ProjectOnPlane(camRot * Vector3.forward, Vector3.up);
+        Vector3 tgtFwd = Vector3.ProjectOnPlane(targetRot * Vector3.forward, Vector3.up);
+        if (camFwd.sqrMagnitude > 1e-6f && tgtFwd.sqrMagnitude > 1e-6f)
+        {
+            float deltaYaw = Vector3.SignedAngle(camFwd, tgtFwd, Vector3.up);
+            Centerposition.RotateAround(camPos, Vector3.up, deltaYaw);
+        }
+
+        // Translate the rig so the head position coincides with frame 0 (read camera pos again:
+        // the RotateAround above moved the rig and thus the camera's world position).
+        Centerposition.position += (targetPos - maincamera.transform.position);
+
+        // Seed playback state so play starts at frame 0 and the between-frame hold uses frame 0.
+        recordtype = rt;
+        index = 0;
+        TempPosition = targetPos;
+        TempRotation = targetRot;
     }
 
     private int ReplayFrameStep()
