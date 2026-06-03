@@ -553,6 +553,10 @@ public class VRHostCameraControl : NetworkBehaviour
                             SavePaPosData(participantspos, filePathpapos);
                             SavePaRotData(participantsrot, filePathparot);
                         }
+                        else
+                        {
+                            SaveObserverLog(participantspos, participantsrot, recordtype);
+                        }
                         participantspos = new List<Vector3>();
                         participantsrot = new List<Quaternion>();
                         play = false;
@@ -652,9 +656,36 @@ public class VRHostCameraControl : NetworkBehaviour
         File.WriteAllText(path, json);
     }
     public void SavePaRotData(List<Quaternion> data, string path)
-    {   
+    {
         string json = JsonConvert.SerializeObject(data, setting);
         File.WriteAllText(path, json);
+    }
+
+    // Observer logs must land somewhere writable in a Player build. On Standalone,
+    // Application.dataPath points at <exe>/<product>_Data; its parent is the exe-level folder
+    // (writable when the app is run from the Desktop). In the Editor this resolves to the project root.
+    private static string ObserverLogRoot => Path.Combine(
+        Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath, "ObserverLogs");
+
+    // Local-replay observer log: identical content/format to the networked PaPos/PaRot files
+    // (List<Vector3> head positions + List<Quaternion> head rotations). Only the destination
+    // differs — written next to the exe with a Record-index + timestamp name so repeated
+    // replays of different records never overwrite each other.
+    private void SaveObserverLog(List<Vector3> positions, List<Quaternion> rotations, int recordIndex)
+    {
+        try
+        {
+            string dir = ObserverLogRoot;
+            if (!Directory.Exists(dir)) { Directory.CreateDirectory(dir); }
+            string suffix = "Rec" + (recordIndex + 1) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".json";
+            SavePaPosData(positions, Path.Combine(dir, "PaPosData_" + suffix));
+            SavePaRotData(rotations, Path.Combine(dir, "PaRotData_" + suffix));
+            Debug.Log("LocalReplay: observer log saved -> " + dir);
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("LocalReplay: failed to save observer log: " + e.Message);
+        }
     }
     //Change the condition of the Border
     [ClientRpc]
@@ -979,6 +1010,10 @@ public class VRHostCameraControl : NetworkBehaviour
             recordtype = record.value;
             play = true;
             index = 0;
+            // Start each replay with empty capture buffers so each saved observer log = exactly
+            // one full replay, even if a prior replay early-bailed (e.g. invalid box frame) without resetting.
+            participantspos = new List<Vector3>();
+            participantsrot = new List<Quaternion>();
 
             // Snapshot controller state once so SetObserverControllersVisible(true) later honors
             // whatever the user (or mask code) had configured before playback started.
