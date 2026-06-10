@@ -102,6 +102,11 @@ public class VRHostCameraControl : NetworkBehaviour
 
     private List<Vector3> participantspos;
     private List<Quaternion> participantsrot;
+    // Replay-step frame index for each observer sample (local replay only). Lets the saved
+    // observer log align 1:1 with the recorded frames offline, independent of fps step.
+    private List<int> participantsframe;
+    // Wall-clock start of the current local-replay playback; paired with save time for duration.
+    private DateTime replayStartUtc;
     private Quaternion syncedRotation;
 
     private Quaternion TempRotation;
@@ -318,6 +323,7 @@ public class VRHostCameraControl : NetworkBehaviour
 
         participantspos = new List<Vector3>();
         participantsrot = new List<Quaternion>();
+        participantsframe = new List<int>();
         filePathpapos = Path.Combine(Application.dataPath, "RecordData", "PaPosData.json");
         filePathparot = Path.Combine(Application.dataPath, "RecordData", "PaRotData.json");
         var directoryPath = Path.GetDirectoryName(filePathpapos);
@@ -525,7 +531,10 @@ public class VRHostCameraControl : NetworkBehaviour
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
                 }
-                if(play == true){
+                // Networked client keeps its legacy per-render-frame sampling. Local replay skips
+                // the hold-frame append so its observer log is sampled once per replay step
+                // (== recorded frame at default fps), staying aligned with the recorded data.
+                if(play == true && !localReplayMode){
                     participantspos.Add(TempPosition);
                     participantsrot.Add(subcamera.transform.rotation);
                 }
@@ -533,9 +542,9 @@ public class VRHostCameraControl : NetworkBehaviour
                     Boxes[i].transform.position = TempBoxpositions[i];
                     Boxes[i].transform.rotation = TempBoxrotations[i];
                 }
-                
-                
-                
+
+
+
                 //return;
                 
             }else{
@@ -568,11 +577,14 @@ public class VRHostCameraControl : NetworkBehaviour
                     }
                     participantspos.Add(TempPosition);
                     participantsrot.Add(subcamera.transform.rotation);
+                    // Record the replay-step frame index alongside each sample so the local-replay
+                    // observer log aligns 1:1 with the recorded frames offline (used in SaveObserverLog).
+                    if (participantsframe != null) { participantsframe.Add(index); }
                     // Debug.Log(TempBoxpositions[0]);
                     for(int i = 0; i < 30; i++){
                         Boxes[i].transform.position = TempBoxpositions[i];
                         Boxes[i].transform.rotation = TempBoxrotations[i];
-                    }     
+                    }
                     // Control the action of the Clients' VR origin by the data from the Server
                     // Centerposition.position = ServerCenterposition;
                     // Centerposition.rotation = ServerCenterRatation;
@@ -590,10 +602,11 @@ public class VRHostCameraControl : NetworkBehaviour
                         }
                         else
                         {
-                            SaveObserverLog(participantspos, participantsrot, recordtype);
+                            SaveObserverLog(participantspos, participantsrot, participantsframe, recordtype);
                         }
                         participantspos = new List<Vector3>();
                         participantsrot = new List<Quaternion>();
+                        participantsframe = new List<int>();
                         play = false;
                         if (localReplayMode)
                         {
@@ -702,11 +715,69 @@ public class VRHostCameraControl : NetworkBehaviour
     private static string ObserverLogRoot => Path.Combine(
         Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath, "ObserverLogs");
 
-    // Local-replay observer log: identical content/format to the networked PaPos/PaRot files
-    // (List<Vector3> head positions + List<Quaternion> head rotations). Only the destination
-    // differs — written next to the exe with a Record-index + timestamp name so repeated
-    // replays of different records never overwrite each other.
-    private void SaveObserverLog(List<Vector3> positions, List<Quaternion> rotations, int recordIndex)
+    // Per-session settings + counts for one local-replay playback. Serialized to
+    // SessionMeta_<suffix>.json so each observer log records the fps / mask / record it ran under,
+    // plus enough counts to verify the PaPos/PaRot files align 1:1 with the recorded frames.
+    [Serializable]
+    private class ReplaySessionMeta
+    {
+        public int recordIndex;
+        public string recordLabel;
+        public int sampleCount;          // == PaPos/PaRot/PaFrameIndex length
+        public int recordedFrameCount;   // frames in the source record
+        public int replayFrameStep;      // index stride per replay step (1 at default 15fps)
+        public string startTimeUtc;
+        public string endTimeUtc;
+        public double durationSeconds;
+
+        public int fpsDropdownIndex;
+        public string fpsDropdownLabel;
+        public float frameRateInterval;
+        public float effectiveFps;      // target replay-step rate (1 / frameRateInterval)
+        public double actualAverageFps; // measured: sampleCount / durationSeconds; < effectiveFps => dropped/slow frames
+
+        public int maskDropdownIndex;
+        public string maskDropdownLabel;
+        public int maskCode;
+        public string maskName;
+
+        public string appVersion;
+        public string unityVersion;
+        public string platform;
+        public string deviceModel;
+    }
+
+    // Internal mask code -> human-readable name. Codes are the values stored in `masktype`
+    // (see dropdownToMaskCode and the ApplyMaskLocal switch). Legacy codes 1..4 kept for clarity.
+    private static string MaskCodeToName(int code)
+    {
+        switch (code)
+        {
+            case 0: return "NoMask";
+            case 1: return "MaskFull";   // legacy
+            case 2: return "MaskTrans";  // legacy
+            case 3: return "LimitFov";   // legacy
+            case 4: return "LimitFov2";  // legacy
+            case 5: return "FullMask";
+            case 6: return "SimpleMask";
+            case 7: return "PointOnly";
+            case 8: return "FovOnly";
+            default: return "Unknown(" + code + ")";
+        }
+    }
+
+    private static string DropdownLabel(TMP_Dropdown dd)
+    {
+        if (dd == null || dd.options == null || dd.value < 0 || dd.value >= dd.options.Count) { return null; }
+        return dd.options[dd.value].text;
+    }
+
+    // Local-replay observer log. PaPos/PaRot keep the exact same content/format as the networked
+    // files (List<Vector3> + List<Quaternion>, Newtonsoft default — same as recorddata). We add two
+    // sibling files sharing the same Rec/timestamp suffix:
+    //   PaFrameIndex_<suffix>.json — replay-step frame index per sample (offline alignment key)
+    //   SessionMeta_<suffix>.json  — this run's fps / mask / record settings + counts
+    private void SaveObserverLog(List<Vector3> positions, List<Quaternion> rotations, List<int> frames, int recordIndex)
     {
         try
         {
@@ -715,6 +786,47 @@ public class VRHostCameraControl : NetworkBehaviour
             string suffix = "Rec" + (recordIndex + 1) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".json";
             SavePaPosData(positions, Path.Combine(dir, "PaPosData_" + suffix));
             SavePaRotData(rotations, Path.Combine(dir, "PaRotData_" + suffix));
+            if (frames != null)
+            {
+                File.WriteAllText(Path.Combine(dir, "PaFrameIndex_" + suffix),
+                    JsonConvert.SerializeObject(frames, setting));
+            }
+
+            DateTime endUtc = DateTime.UtcNow;
+            int sampleCnt = positions != null ? positions.Count : 0;
+            double durSec = (endUtc - replayStartUtc).TotalSeconds;
+            var meta = new ReplaySessionMeta
+            {
+                recordIndex = recordIndex,
+                recordLabel = (record != null && record.options != null &&
+                               recordIndex >= 0 && recordIndex < record.options.Count)
+                              ? record.options[recordIndex].text : ("Record " + (recordIndex + 1)),
+                sampleCount = sampleCnt,
+                recordedFrameCount = actionrecord != null ? actionrecord.Numofactions(recordIndex) : 0,
+                replayFrameStep = ReplayFrameStep(),
+                startTimeUtc = replayStartUtc.ToString("o"),
+                endTimeUtc = endUtc.ToString("o"),
+                durationSeconds = durSec,
+
+                fpsDropdownIndex = dropdownfps != null ? dropdownfps.value : -1,
+                fpsDropdownLabel = DropdownLabel(dropdownfps),
+                frameRateInterval = frameRateInterval,
+                effectiveFps = frameRateInterval > 0f ? 1f / frameRateInterval : 0f,
+                actualAverageFps = durSec > 0 ? sampleCnt / durSec : 0,
+
+                maskDropdownIndex = mask != null ? mask.value : -1,
+                maskDropdownLabel = DropdownLabel(mask),
+                maskCode = masktype,
+                maskName = MaskCodeToName(masktype),
+
+                appVersion = Application.version,
+                unityVersion = Application.unityVersion,
+                platform = Application.platform.ToString(),
+                deviceModel = SystemInfo.deviceModel
+            };
+            File.WriteAllText(Path.Combine(dir, "SessionMeta_" + suffix),
+                JsonConvert.SerializeObject(meta, Formatting.Indented, setting));
+
             Debug.Log("LocalReplay: observer log saved -> " + dir);
         }
         catch (Exception e)
@@ -1049,6 +1161,8 @@ public class VRHostCameraControl : NetworkBehaviour
             // one full replay, even if a prior replay early-bailed (e.g. invalid box frame) without resetting.
             participantspos = new List<Vector3>();
             participantsrot = new List<Quaternion>();
+            participantsframe = new List<int>();
+            replayStartUtc = DateTime.UtcNow;
 
             // Snapshot controller state once so SetObserverControllersVisible(true) later honors
             // whatever the user (or mask code) had configured before playback started.
