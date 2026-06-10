@@ -969,7 +969,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 frameRateInterval = 1.0f / 5.0f;
                 break;
             case 2:
-                 frameRateInterval = 1.0f / 17.0f;
+                 frameRateInterval = 1.0f / 15.0f;
                 break;
             case 3:
                 frameRateInterval = 1.0f / 25.0f;
