@@ -107,6 +107,9 @@ public class VRHostCameraControl : NetworkBehaviour
     private List<int> participantsframe;
     // Wall-clock start of the current local-replay playback; paired with save time for duration.
     private DateTime replayStartUtc;
+    // Render-frame count at playback start; (Time.frameCount - this) / duration = average render fps,
+    // which sets the quantization granularity for replay stepping (logged in SessionMeta).
+    private int replayStartFrameCount;
     private Quaternion syncedRotation;
 
     private Quaternion TempRotation;
@@ -651,8 +654,11 @@ public class VRHostCameraControl : NetworkBehaviour
                     TempPosition = syncedPosition;
                     TempRotation = syncedRotation;
                 }
-                nextFrameTime = Time.time + frameRateInterval;
-                
+                // Accumulate the deadline instead of re-anchoring to Time.time each step: this keeps
+                // the sub-frame remainder (e.g. 66.7ms target vs 27ms render frames) so the average
+                // step rate converges to the target fps instead of rounding up to whole render frames.
+                nextFrameTime += frameRateInterval;
+
                 // Initiate the start point
                 if(nextsecond <= nextFrameTime - 1.5f){
                     nextsecond = nextFrameTime;
@@ -735,6 +741,7 @@ public class VRHostCameraControl : NetworkBehaviour
         public float frameRateInterval;
         public float effectiveFps;      // target replay-step rate (1 / frameRateInterval)
         public double actualAverageFps; // measured: sampleCount / durationSeconds; < effectiveFps => dropped/slow frames
+        public double actualRenderFps;  // measured: render frames / durationSeconds; the render ceiling that quantizes stepping
 
         public int maskDropdownIndex;
         public string maskDropdownLabel;
@@ -795,6 +802,7 @@ public class VRHostCameraControl : NetworkBehaviour
             DateTime endUtc = DateTime.UtcNow;
             int sampleCnt = positions != null ? positions.Count : 0;
             double durSec = (endUtc - replayStartUtc).TotalSeconds;
+            int renderFrames = Time.frameCount - replayStartFrameCount;
             var meta = new ReplaySessionMeta
             {
                 recordIndex = recordIndex,
@@ -813,6 +821,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 frameRateInterval = frameRateInterval,
                 effectiveFps = frameRateInterval > 0f ? 1f / frameRateInterval : 0f,
                 actualAverageFps = durSec > 0 ? sampleCnt / durSec : 0,
+                actualRenderFps = durSec > 0 ? renderFrames / durSec : 0,
 
                 maskDropdownIndex = mask != null ? mask.value : -1,
                 maskDropdownLabel = DropdownLabel(mask),
@@ -1157,6 +1166,10 @@ public class VRHostCameraControl : NetworkBehaviour
             recordtype = record.value;
             play = true;
             index = 0;
+            // Anchor the accumulating replay-step clock to "now" so the first steps don't burst
+            // (catch-up) from a stale nextFrameTime; record render-frame baseline for avg render fps.
+            nextFrameTime = Time.time;
+            replayStartFrameCount = Time.frameCount;
             // Start each replay with empty capture buffers so each saved observer log = exactly
             // one full replay, even if a prior replay early-bailed (e.g. invalid box frame) without resetting.
             participantspos = new List<Vector3>();
