@@ -577,6 +577,12 @@ public class VRHostCameraControl : NetworkBehaviour
                         maincamera.transform.position = TempPosition;
                         maincamera.transform.rotation = TempRotation;
                         subcamera.transform.position = TempPosition + SubCameraRoomOffset;
+                    }else{
+                        // NoMask/SimpleMask: without this the camera keeps last frame's pose
+                        // while the boxes below jump to the new frame, desyncing them by one
+                        // render frame every replay step (visible as box jitter).
+                        maincamera.transform.position = TempPosition;
+                        maincamera.transform.rotation = TempRotation;
                     }
                     participantspos.Add(TempPosition);
                     participantsrot.Add(subcamera.transform.rotation);
@@ -642,6 +648,12 @@ public class VRHostCameraControl : NetworkBehaviour
                         maincamera.transform.position = syncedPosition;
                         maincamera.transform.rotation = syncedRotation;
                         subcamera.transform.position = syncedPosition + SubCameraRoomOffset;
+                    }
+                    else{
+                        // NoMask/SimpleMask: same one-render-frame camera/box desync as the
+                        // replay branch above — update the camera in the same frame as the boxes.
+                        maincamera.transform.position = syncedPosition;
+                        maincamera.transform.rotation = syncedRotation;
                     }
                     for(int i = 0; i < 30; i++){
                         
