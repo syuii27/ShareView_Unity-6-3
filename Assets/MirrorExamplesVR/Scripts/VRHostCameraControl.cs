@@ -39,6 +39,9 @@ public class VRHostCameraControl : NetworkBehaviour
     public GameObject Box15;
     // Center-screen "playback completed" panel; assigned in scene, child of main Canvas.
     public GameObject replayCompletedText;
+    // Full-view black overlay shown alongside the end text so the observer can't keep
+    // looking at the shelf after a replay ends; child of main Canvas, inactive at start.
+    public GameObject endBlackMask;
     // Captured at the start of each playback so subsequent restores honor the user's pre-playback layout.
     private bool leftHandActiveBeforePlay;
     private bool rightHandActiveBeforePlay;
@@ -358,6 +361,7 @@ public class VRHostCameraControl : NetworkBehaviour
         // Author-time stray "active" state on the completion panel would otherwise show before
         // the user has even played anything.
         if (replayCompletedText != null) { replayCompletedText.SetActive(false); }
+        if (endBlackMask != null) { endBlackMask.SetActive(false); }
         // Apply the per-build local-replay defaults: fps ("15FPS") and mask (NoMask / PointOnly).
         // Call the handlers directly instead of relying on the dropdown onValueChanged listeners,
         // which do not fire when the assigned value equals the current one (e.g. default NoMask).
@@ -1157,6 +1161,10 @@ public class VRHostCameraControl : NetworkBehaviour
         {
             replayCompletedText.SetActive(true);
         }
+        // Black out the whole view the instant the record ends so the observer has nothing
+        // to look at while being asked to remove the HMD. Tied to the same condition as the
+        // end text; cleared again when playback restarts (PlaytheRecord).
+        if (showCompletedMessage && endBlackMask != null) { endBlackMask.SetActive(true); }
     }
 
     // Play the record
@@ -1197,6 +1205,7 @@ public class VRHostCameraControl : NetworkBehaviour
             SetObserverControllersVisible(false);
             replayHudHiddenForPlay = true;
             if (replayCompletedText != null) { replayCompletedText.SetActive(false); }
+            if (endBlackMask != null) { endBlackMask.SetActive(false); }
 
             EnsureReplayTargetsActive();
             // Playback owns the maincamera transform; let JSON drive it without HMD fighting it.
