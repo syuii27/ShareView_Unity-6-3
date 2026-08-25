@@ -62,3 +62,13 @@
 *.so filter=lfs diff=lfs merge=lfs -text
 *.dylib filter=lfs diff=lfs merge=lfs -text
 *.bundle filter=lfs diff=lfs merge=lfs -text
+
+# ---------------------------------------------------------------------------
+# Unity writes some assets as BINARY even though they carry the .asset
+# extension. The explicit `*.asset text eol=lf` rule above bypasses git's
+# binary detection and unconditionally strips CR bytes from them, silently
+# corrupting the file on commit. Pin these back to binary.
+# ---------------------------------------------------------------------------
+LightingData.asset binary
+NavMesh.asset binary
+OcclusionCullingData.asset binary
