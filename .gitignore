@@ -53,6 +53,7 @@ ExportedObj/
 !/[Tt]ools/[Rr]ecord[Dd]ata[Vv]isualizer/*.csproj
 *.unityproj
 *.sln
+*.slnx
 *.suo
 *.tmp
 *.user
