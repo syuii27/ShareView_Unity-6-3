@@ -8,7 +8,7 @@
 验收：每个改动的验收方式写在各自的计划里。
 
 ## 下一步
-1. 用户审阅并提交 D-007 的改动：AGENTS.md、DECISIONS.md、PROGRESS.md、docs/unity-cli.md、docs/architecture.md。
+1. 用户审阅并提交编辑器操作能力核对后的文档更新：docs/unity-cli.md、PROGRESS.md。
 2. 用户给出两个功能改动的内容。
 3. agent 逐个写计划，批准后实现，用 docs/unity-cli.md 中的命令（含 eval）自验，再交用户在头显中验收。
 
@@ -18,7 +18,7 @@ VRHostCameraControl.cs（1476 行）按职责拆分的时机；agent 建议放�
 
 ## 阻塞与未验证事项
 开发环境将于 2026-11-01 换到另一台机器：换机前要推送全部改动，并按 README.md 单独拷贝不进版本库的数据；新机器上要按 docs/unity-cli.md 重新安装 CLI 并登录。
-验证缺口：项目没有自动测试。未验证：脚本有改动时经 unity command script recompile 的实际编译与报错读取，目前只跑过脚本无改动时返回 up_to_date 的情况。
+验证缺口：项目没有自动测试。未验证：遮罩效果能否从截图中看出。PointOnly 回放中，场景里有 8 个点线对象（预制体 Line，挂在 World Space Canvas 的 RawImage 下），但 Game 视图截图中看不到，原因未查。
 
 ## 范围外发现的问题
 OverlayImageRendererFeature 没有挂到任何 URP Renderer（Android Preset 与 Standalone Preset 的 Renderer Features 都为空），目前不生效。
