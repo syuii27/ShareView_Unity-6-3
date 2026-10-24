@@ -31,7 +31,7 @@ unity command diagnostics get_performance：帧时间（CPU、GPU、主线程）
 主实例：VRCanvasHUD 的 hostCamera 字段就是回放使用的 VRHostCameraControl。
 切换遮罩：VRHostCameraControl 的私有字段 mask（TMP_Dropdown），value 为 0 到 4，依次对应 masktype 0、6、8、7、5（NoMask、SimpleMask、FovOnly、PointOnly、FullMask）；设置 value 会触发与界面操作相同的处理。
 播放与进度：调用 PlaytheRecord() 播放下拉框所选记录；IsReplayPlaying 表示是否在播，私有字段 index 为当前帧号，masktype 与 recordtype 为当前遮罩与记录。
-数据：ServerActionRecording 的 NumOfRecords() 与 Numofactions(记录号) 给出记录数与帧数。本机 StreamingAssets 中的 Record 1 有 3776 帧，按 15FPS 回放约 252 秒。播完在 ObserverLogs 生成四个文件，SessionMeta 中 sampleCount 与 recordedFrameCount 相等。
+数据：ServerActionRecording 的 NumOfRecords() 与 Numofactions(记录号) 给出记录数与帧数，两段录制的帧数与回放时长见 docs/architecture.md 的数据路径。播完在 ObserverLogs 生成四个文件，SessionMeta 中 sampleCount 与 recordedFrameCount 相等。
 runtime simulate_key 返回成功，但应用没有反应。项目的 Input System 设置 editorInputBehaviorInPlayMode 为 PointersAndKeyboardsRespectGameViewFocus，推断是 Game 视图没有焦点时键盘输入不送进游戏（未在 Game 视图有焦点时复测）。驱动流程用上面的方法调用，不用模拟按键。
 
 ## 注意

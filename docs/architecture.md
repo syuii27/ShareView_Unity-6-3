@@ -21,13 +21,18 @@ Build Settings 中只启用核心场景 Assets/MirrorExamplesVR/Scenes/SceneVR-U
 ## 运行模式
 Host、Server、Client 由 VRCanvasHUD 启动。Client 在局域网中发现服务器后自动连接发现的第一个；Auto 先搜索约 3 秒，找不到就以 Host 启动。
 Local Replay 不启动任何 Mirror 角色，isServer 与 isClient 都为 false，由 VRCanvasHUD 直接调用 ServerActionRecording 与 VRHostCameraControl 的本地初始化。入口为 HUD 的 Local Replay 按钮，或右手柄 A 与键盘 A；进入后，未在播放时再按 A 回到第 0 帧，按 B 播放下拉框所选的记录。
+实验用法（用户，2026-10-24）：实验只用 Local Replay，固定 15FPS。构建 Windows Standalone 的 exe，把整个构建文件夹拷到实验用的 Windows 电脑，经 Quest Link 串流到头显；头显本身算力不足，不用 Android 构建。录制今后基本不再使用，只回放现有的两段录制，见数据路径。
 
 ## 核心场景中的相机与遮罩
 VRHostCameraControl 与 ServerActionRecording 在核心场景中各有两个实例。引用完整的一组都在 Interactable Kinematic Torus（fileID 6559198439968760670）上；另外两个实例在其他对象上，缺少 White_Circle、border、syncButton 等引用，其中另一个 VRHostCameraControl 组件处于禁用状态。Local Replay 由 VRCanvasHUD 按引用是否完整打分，选出主实例。
 主实例的字段与场景对象：subcamera 为 Sub Camera，fovcamera 为 FOVCamera，Image_Mask 为 Image_Mask，Image_Mask1 为 RawImage，White_Circle 为 WhiteCircle，Mark 为 Mark，border 为 Border，endBlackMask 为 EndBlackMask。
 主相机带 MainCamera 标签与 TrackedPoseDriver，位于预制体 Complete XR Origin Set Up 嵌套的 XR Origin Preconfigured 中。场景中所有 Canvas 都是 World Space。
+Local Replay 播放时主相机由记录驱动，TrackedPoseDriver 关闭，不跟随头显。Sub Camera 挂在 XR Origin 的 CameraOffset 下，在复制的 SubRoom 中渲染：FovOnly、PointOnly、FullMask 下代码把它放在操作者位置加 SubCameraRoomOffset (6.5, 0, 42)，NoMask 与 SimpleMask 下不更新位置；旋转由它的 TrackedPoseDriver（只跟随旋转）取参与者的头部转动。Sub Camera 输出到 Render_tex（2048×2048，深度格式为 None），Render_tex 经 LimFov3.mat（着色器 TransparentCircle，挖空中央椭圆）显示在 Image_Mask1 上。Image_Mask1 所在的 Canvas 是主相机的子对象，所以椭圆内是操作者视角，椭圆外是随参与者转头的 SubRoom 画面；PointOnly 下关闭这张 RawImage，只保留其下的运动补偿点。
+运动补偿点按操作者与参与者头部转动之差算出相对运动方向，并沿该方向移动，用于提示相对运动的风险；这个方向是设计意图（用户确认，2026-10-24）。
 
 ## 数据路径
 录制：写入 Application.dataPath/RecordData，编辑器中即 Assets/RecordData；文件为 MainPosData.json、MainRotData.json、BoxPosData.json、BoxRotData.json。
 联网回放：Client 播放完一条记录时，把观察者位姿写入 Application.dataPath/RecordData 下的 PaPosData.json 与 PaRotData.json。
 本地回放：读取 Application.streamingAssetsPath/RecordData 下与录制同名的四个文件。播放完一条记录时写观察者日志到 Application.dataPath 上一级目录中的 ObserverLogs：编辑器中为项目根目录，Windows 构建中为 exe 所在目录。文件为 PaPosData_、PaRotData_、PaFrameIndex_ 与 SessionMeta_，后缀为记录序号与时间戳。
+两段录制：StreamingAssets/RecordData 设计上一次只放一段，每个构建只含一段（用户，2026-10-24）。现有两段在 Assets/RecordData/1（3776 帧）与 Assets/RecordData/2（3443 帧），各含一段（2026-10-24 解析文件得到）。录制文件不带时间戳；按代码，15FPS 下回放每步的时刻按 1/15 秒累加，渲染帧率高于 15 时时长约为帧数除以 15，即约 251.7 秒与 229.5 秒。823b782（2026-06-10）之前的构建，回放时长随渲染帧率变化。
+观察者日志的内容：PaPos 为记录中的操作者位置；PaRot 为 Sub Camera 的世界旋转，即参与者的头部朝向，含进入回放时的水平对齐；参与者的头部位置目前不记录。后缀中的记录序号总是 Rec1，区分两段录制看日志所在的构建文件夹或 SessionMeta 的 recordedFrameCount。日志写到 exe 同级的 ObserverLogs，用户已在实验电脑上确认（2026-10-24）。
