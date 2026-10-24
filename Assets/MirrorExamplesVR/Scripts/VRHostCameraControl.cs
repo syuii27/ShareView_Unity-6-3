@@ -87,6 +87,51 @@ public class VRHostCameraControl : NetworkBehaviour
     public Material lineMaterial;
     public float lineWidth = 20f;
     public float lineDisplayDuration = 0.9f;
+
+    // Dot cues under evaluation (mask codes 9-12). Dots move by the relative rotation (displayed
+    // operator rotation minus participant head rotation) and use only data the live system has at
+    // display time (DECISIONS.md D-008, D-010). Tunable in the Inspector; SessionMeta logs the values.
+    [Serializable]
+    public class DotCueStyle
+    {
+        public float gain = 0.8f;              // dot speed / relative rotation speed
+        public float alpha = 0.5f;             // base opacity
+        public float sizeUnits = 10f;          // canvas units; the original PointOnly dots use 10
+        public float smoothingSeconds = 0.04f; // EMA time constant of the dot velocity
+    }
+
+    [Serializable]
+    public class DotCueGate
+    {
+        public float onDegPerSec = 20f;        // starting values; tune in the headset
+        public float offDegPerSec = 10f;
+        public float holdSeconds = 0.5f;       // stay below offDegPerSec this long before fading out
+        public float smoothingSeconds = 0.2f;  // EMA of the relative speed seen by the gate only
+        public float fadeInSeconds = 0.15f;
+        public float fadeOutSeconds = 0.3f;
+    }
+
+    [Header("Dot cues under evaluation (mask codes 9-12)")]
+    public DotCueStyle ringStyle = new DotCueStyle { gain = 0.8f, alpha = 0.5f };
+    public float ringSpacingDeg = 16f;
+    public float ringInnerDeg = 22f;
+    public float ringOuterDeg = 45f;
+    public float ringEdgeFadeDeg = 4f;
+    public DotCueStyle returnStyle = new DotCueStyle { gain = 0.4f, alpha = 1f };
+    public float returnSeconds = 0.75f;
+    public DotCueGate cueGate = new DotCueGate();
+    // The original PointOnly start layout (canvas units), reused by the return-to-origin cue.
+    private static readonly Vector2[] PointOnlyLayout = {
+        new Vector2(-120f, -75f), new Vector2(120f, -75f), new Vector2(-120f, 75f), new Vector2(120f, 75f),
+        new Vector2(-120f, 0f), new Vector2(120f, 0f), new Vector2(0f, -75f), new Vector2(0f, 75f) };
+    private readonly List<Image> cueDots = new List<Image>();
+    private readonly List<Vector2> cueBaseDeg = new List<Vector2>();
+    private int cueLayout = 0;                 // 0 none, 1 ring lattice (A), 2 eight return dots (B)
+    private bool cueStateValid;
+    private Quaternion cuePrevOp, cuePrevPart;
+    private Vector2 cueVelocity, cueOffset;    // deg/s, deg
+    private float cueGateSpeed, cueGateBelow, cueGateAlpha;
+    private bool cueGateOn;
     // Send the action of main camera to all clients
     private List<Vector3> SyncBoxPositions = new List<Vector3>(30);
     [SyncVar]
@@ -149,9 +194,11 @@ public class VRHostCameraControl : NetworkBehaviour
     private bool localReplayInitialized = false;
 
     // Dropdown index → internal mask code in ApplyMaskLocal switch.
-    // Order: NoMask, SimpleMask, FovOnly, PointOnly, FullMask.
+    // Order: NoMask, SimpleMask, FovOnly, PointOnly, FullMask, then the dot cues under evaluation
+    // (9 PointA_Always, 10 PointA_Gated, 11 PointB_Always, 12 PointB_Gated), appended so the
+    // existing indices keep their meaning.
     // Keep legacy codes 1..4 reachable: re-add an entry here to surface them again.
-    private readonly int[] dropdownToMaskCode = new int[] { 0, 6, 8, 7, 5 };
+    private readonly int[] dropdownToMaskCode = new int[] { 0, 6, 8, 7, 5, 9, 10, 11, 12 };
 
     // Translation from the recorded/main-camera world position to the Sub Camera's
     // position inside the duplicate ("similar") room used for the peripheral view.
@@ -314,6 +361,11 @@ public class VRHostCameraControl : NetworkBehaviour
         if (idx < 0 || idx >= dropdownToMaskCode.Length) { return 0; }
         return dropdownToMaskCode[idx];
     }
+
+    private static bool IsDotCueMask(int code) { return code >= 9 && code <= 12; }
+
+    // Masks that place the Sub Camera at the operator position (its rotation follows the participant).
+    private static bool UsesSubCamera(int code) { return code == 8 || code == 7 || code == 5 || IsDotCueMask(code); }
 
     private void InitClientLikePlayback()
     {
@@ -501,7 +553,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 if (maincamera != null)
                 {
                     Vector3 headPos = maincamera.transform.position;
-                    if ((masktype == 8 || masktype == 7 || masktype == 5) && subcamera != null && subcamera.activeInHierarchy)
+                    if (UsesSubCamera(masktype) && subcamera != null && subcamera.activeInHierarchy)
                     {
                         subcamera.transform.position = headPos + SubCameraRoomOffset;
                     }
@@ -528,7 +580,7 @@ public class VRHostCameraControl : NetworkBehaviour
                     subcamera.transform.rotation = TempRotation;
                     maincamera.transform.position = TempPosition;
                     //maincamera.transform.rotation = syncedRotation;
-                }else if(masktype == 8 || masktype == 7 || masktype == 5){
+                }else if(UsesSubCamera(masktype)){
 
                     maincamera.transform.position = TempPosition;
                     maincamera.transform.rotation = TempRotation;
@@ -577,7 +629,7 @@ public class VRHostCameraControl : NetworkBehaviour
                         subcamera.transform.position = TempPosition;
                         subcamera.transform.rotation = TempRotation;
                         maincamera.transform.position = TempPosition;
-                    }else if(masktype == 8 || masktype == 7 || masktype == 5){
+                    }else if(UsesSubCamera(masktype)){
                         maincamera.transform.position = TempPosition;
                         maincamera.transform.rotation = TempRotation;
                         subcamera.transform.position = TempPosition + SubCameraRoomOffset;
@@ -646,7 +698,7 @@ public class VRHostCameraControl : NetworkBehaviour
                         maincamera.transform.position = syncedPosition; 
                         //maincamera.transform.rotation = syncedRotation;
                     }
-                    else if(masktype == 8 || masktype == 7 || masktype == 5){
+                    else if(UsesSubCamera(masktype)){
                         //ChangetheCenterAndAttach();
                         // Update the camera data
                         maincamera.transform.position = syncedPosition;
@@ -718,6 +770,8 @@ public class VRHostCameraControl : NetworkBehaviour
                     ChangetheDotPosition();
                 }
             }
+            // Dot cues under evaluation update every rendered frame (no 1/60 s call gate).
+            if (IsDotCueMask(masktype)) { UpdateDotCues(Time.deltaTime); }
         }          
     }
     public void SavePaPosData(List<Vector3> data, string path)
@@ -764,11 +818,23 @@ public class VRHostCameraControl : NetworkBehaviour
         public string maskDropdownLabel;
         public int maskCode;
         public string maskName;
+        public DotCueLog dotCue;        // settings of the evaluation dot cue in use; null for other masks
 
         public string appVersion;
         public string unityVersion;
         public string platform;
         public string deviceModel;
+    }
+
+    [Serializable]
+    private class DotCueLog
+    {
+        public string layout;           // "ring" (A) or "return" (B)
+        public bool gated;
+        public DotCueStyle style;
+        public float ringSpacingDeg, ringInnerDeg, ringOuterDeg, ringEdgeFadeDeg;
+        public float returnSeconds;
+        public DotCueGate gate;         // null when the dots are always shown
     }
 
     // Internal mask code -> human-readable name. Codes are the values stored in `masktype`
@@ -786,6 +852,10 @@ public class VRHostCameraControl : NetworkBehaviour
             case 6: return "SimpleMask";
             case 7: return "PointOnly";
             case 8: return "FovOnly";
+            case 9: return "PointA_Always";
+            case 10: return "PointA_Gated";
+            case 11: return "PointB_Always";
+            case 12: return "PointB_Gated";
             default: return "Unknown(" + code + ")";
         }
     }
@@ -845,6 +915,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 maskDropdownLabel = DropdownLabel(mask),
                 maskCode = masktype,
                 maskName = MaskCodeToName(masktype),
+                dotCue = IsDotCueMask(masktype) ? BuildDotCueLog() : null,
 
                 appVersion = Application.version,
                 unityVersion = Application.unityVersion,
@@ -1097,6 +1168,191 @@ public class VRHostCameraControl : NetworkBehaviour
         lines.Remove(lineRenderer);
         Destroy(lineRenderer.gameObject);
     }
+    // ----- Dot cues under evaluation (mask codes 9-12) -----
+
+    // Per-frame relative view-direction change in degrees (x right, y up): the displayed operator
+    // rotation change against the participant's head rotation change, combined as in ChangetheDotPosition.
+    public static Vector2 RelativeViewDeltaDeg(Quaternion prevOp, Quaternion op, Quaternion prevPart, Quaternion part)
+    {
+        Quaternion rel = Quaternion.Inverse(Quaternion.Inverse(prevPart) * part) * (Quaternion.Inverse(prevOp) * op);
+        Vector3 f = rel * Vector3.forward;
+        return new Vector2(Mathf.Atan2(f.x, f.z), Mathf.Atan2(f.y, f.z)) * Mathf.Rad2Deg;
+    }
+
+    // Exponential smoothing step with time constant tau in seconds; tau <= 0 means no smoothing.
+    public static Vector2 SmoothToward(Vector2 current, Vector2 target, float dt, float tau)
+    {
+        return tau > 0f ? current + (target - current) * (1f - Mathf.Exp(-dt / tau)) : target;
+    }
+
+    // One step of the on/off gate (hysteresis plus hold); returns the new fade alpha in 0..1.
+    public static float StepGate(ref bool on, ref float below, float speed, float alpha, float dt, DotCueGate g)
+    {
+        if (!on && speed >= g.onDegPerSec) { on = true; below = 0f; }
+        else if (on)
+        {
+            below = speed < g.offDegPerSec ? below + dt : 0f;
+            if (below >= g.holdSeconds) { on = false; }
+        }
+        return on ? Mathf.Min(1f, alpha + dt / Mathf.Max(g.fadeInSeconds, 0.001f))
+                  : Mathf.Max(0f, alpha - dt / Mathf.Max(g.fadeOutSeconds, 0.001f));
+    }
+
+    // Canvas units of Image_Mask1 per unit of tan(angle), so dots sit at true visual angles.
+    private float CueUnitsPerTan()
+    {
+        if (Image_Mask1 == null || !ResolveMainCamera()) { return 0f; }
+        Transform plane = Image_Mask1.transform, cam = maincamera.transform;
+        float d = Vector3.Dot(plane.position - cam.position, cam.forward);
+        float unit = plane.lossyScale.x;
+        return (d > 0f && unit > 0f) ? d / unit : 0f;
+    }
+
+    private void BuildDotCues(int layout)
+    {
+        foreach (var img in cueDots) { if (img != null) { Destroy(img.gameObject); } }
+        cueDots.Clear();
+        cueBaseDeg.Clear();
+        cueLayout = layout;
+        if (Image_Mask1 == null || DotImagePrefab == null) { return; }
+        if (layout == 1)
+        {
+            // Hexagonal lattice reaching one period past the ring, so the shifted lattice always covers it.
+            float s = Mathf.Max(ringSpacingDeg, 1f), rowH = s * 0.8660254f;
+            float reach = ringOuterDeg + s + 2f * rowH;
+            int nx = Mathf.CeilToInt(reach / s) + 1, ny = Mathf.CeilToInt(reach / rowH) + 1;
+            for (int j = -ny; j <= ny; j++)
+            {
+                for (int i = -nx; i <= nx; i++)
+                {
+                    var p = new Vector2(i * s + ((j & 1) != 0 ? 0.5f * s : 0f), j * rowH);
+                    if (p.magnitude <= reach) { cueBaseDeg.Add(p); }
+                }
+            }
+        }
+        else
+        {
+            float k = CueUnitsPerTan();
+            foreach (var p in PointOnlyLayout)
+            {
+                cueBaseDeg.Add(k > 0f ? new Vector2(Mathf.Atan(p.x / k), Mathf.Atan(p.y / k)) * Mathf.Rad2Deg : Vector2.zero);
+            }
+        }
+        for (int i = 0; i < cueBaseDeg.Count; i++)
+        {
+            Image dot = Instantiate(DotImagePrefab);
+            dot.transform.SetParent(Image_Mask1.transform, false);
+            dot.enabled = false;
+            cueDots.Add(dot);
+        }
+    }
+
+    private void ShowDotCues(int code)
+    {
+        int layout = (code == 9 || code == 10) ? 1 : 2;
+        if (layout != cueLayout || cueDots.Count == 0) { BuildDotCues(layout); }
+        // Legacy PointOnly dots share the Image_Mask1 parent; clear them so only one style shows.
+        lines.ForEach(img => Destroy(img.gameObject));
+        lines.Clear();
+        cueStateValid = false;
+        cueVelocity = Vector2.zero;
+        cueOffset = Vector2.zero;
+        cueGateSpeed = 0f;
+        cueGateBelow = 0f;
+        cueGateOn = false;
+        cueGateAlpha = (code == 10 || code == 12) ? 0f : 1f;
+        LayoutDotCues();
+    }
+
+    private void HideDotCues()
+    {
+        foreach (var img in cueDots) { if (img != null) { img.enabled = false; } }
+    }
+
+    private void UpdateDotCues(float dt)
+    {
+        if (dt <= 0f || subcamera == null || cueLayout == 0) { return; }
+        Quaternion op = TempRotation, part = subcamera.transform.rotation;
+        if (!cueStateValid) { cuePrevOp = op; cuePrevPart = part; cueStateValid = true; }
+        Vector2 relVel = RelativeViewDeltaDeg(cuePrevOp, op, cuePrevPart, part) / dt;
+        cuePrevOp = op;
+        cuePrevPart = part;
+        bool ring = cueLayout == 1;
+        DotCueStyle style = ring ? ringStyle : returnStyle;
+        cueVelocity = SmoothToward(cueVelocity, relVel * style.gain, dt, style.smoothingSeconds);
+        if (ring)
+        {
+            float s = Mathf.Max(ringSpacingDeg, 1f);
+            cueOffset += cueVelocity * dt;
+            cueOffset = new Vector2(Mathf.Repeat(cueOffset.x, s), Mathf.Repeat(cueOffset.y, 2f * s * 0.8660254f));
+        }
+        else
+        {
+            cueOffset += (cueVelocity - cueOffset / Mathf.Max(returnSeconds, 0.01f)) * dt;
+        }
+        if (masktype == 10 || masktype == 12)
+        {
+            cueGateSpeed += (relVel.magnitude - cueGateSpeed) * (1f - Mathf.Exp(-dt / Mathf.Max(cueGate.smoothingSeconds, 0.001f)));
+            cueGateAlpha = StepGate(ref cueGateOn, ref cueGateBelow, cueGateSpeed, cueGateAlpha, dt, cueGate);
+            // Fully hidden: return to the base layout so the next appearance starts there.
+            if (cueGateAlpha <= 0f) { cueOffset = Vector2.zero; }
+        }
+        LayoutDotCues();
+    }
+
+    private void LayoutDotCues()
+    {
+        float k = CueUnitsPerTan();
+        if (k <= 0f || cueDots.Count != cueBaseDeg.Count) { return; }
+        bool ring = cueLayout == 1;
+        DotCueStyle style = ring ? ringStyle : returnStyle;
+        Vector2 shift = cueOffset;
+        if (ring)
+        {
+            float s = Mathf.Max(ringSpacingDeg, 1f), rowH = s * 0.8660254f;
+            shift = new Vector2(Mathf.Repeat(cueOffset.x + 0.5f * s, s) - 0.5f * s,
+                                Mathf.Repeat(cueOffset.y + rowH, 2f * rowH) - rowH);
+        }
+        float fade = Mathf.Max(ringEdgeFadeDeg, 0.01f);
+        for (int i = 0; i < cueDots.Count; i++)
+        {
+            Image img = cueDots[i];
+            if (img == null) { continue; }
+            Vector2 a = cueBaseDeg[i] + shift;
+            float w = 1f;
+            if (ring)
+            {
+                float r = a.magnitude;
+                w = Mathf.Clamp01((r - ringInnerDeg) / fade) * Mathf.Clamp01((ringOuterDeg - r) / fade);
+            }
+            float alpha = style.alpha * cueGateAlpha * w;
+            img.enabled = alpha > 0.001f && Mathf.Abs(a.x) < 80f && Mathf.Abs(a.y) < 80f;
+            if (!img.enabled) { continue; }
+            img.rectTransform.localPosition = new Vector3(Mathf.Tan(a.x * Mathf.Deg2Rad) * k, Mathf.Tan(a.y * Mathf.Deg2Rad) * k, -2f);
+            img.rectTransform.sizeDelta = new Vector2(style.sizeUnits, style.sizeUnits);
+            Color c = img.color;
+            c.a = alpha;
+            img.color = c;
+        }
+    }
+
+    private DotCueLog BuildDotCueLog()
+    {
+        bool ring = masktype == 9 || masktype == 10, gated = masktype == 10 || masktype == 12;
+        return new DotCueLog
+        {
+            layout = ring ? "ring" : "return",
+            gated = gated,
+            style = ring ? ringStyle : returnStyle,
+            ringSpacingDeg = ringSpacingDeg,
+            ringInnerDeg = ringInnerDeg,
+            ringOuterDeg = ringOuterDeg,
+            ringEdgeFadeDeg = ringEdgeFadeDeg,
+            returnSeconds = returnSeconds,
+            gate = gated ? cueGate : null
+        };
+    }
+
     void DropdownValueChanged(TMP_Dropdown change)
     {
         // Change the interval between two frames
@@ -1171,6 +1427,8 @@ public class VRHostCameraControl : NetworkBehaviour
         // to look at while being asked to remove the HMD. Tied to the same condition as the
         // end text; cleared again when playback restarts (PlaytheRecord).
         if (showCompletedMessage && endBlackMask != null) { endBlackMask.SetActive(true); }
+        // Keep the evaluation dot cues off the black end screen; PlaytheRecord shows them again.
+        if (showCompletedMessage) { HideDotCues(); }
     }
 
     // Play the record
@@ -1216,6 +1474,8 @@ public class VRHostCameraControl : NetworkBehaviour
             EnsureReplayTargetsActive();
             // Playback owns the maincamera transform; let JSON drive it without HMD fighting it.
             SetMainCameraTrackedPose(false);
+            // Start the evaluation dot cues from their base layout with no motion history.
+            if (IsDotCueMask(masktype)) { ShowDotCues(masktype); }
         }
         else
         {
@@ -1292,6 +1552,8 @@ public class VRHostCameraControl : NetworkBehaviour
         // Reset maincamera bg to the captured default; case 6 overrides to black so SimpleMask's
         // periphery beyond Image_Mask1's quad shows black instead of the default blue clear color.
         if (mainCameraBgCaptured) { SetMainCameraBgColor(mainCameraDefaultBgColor); }
+        // The evaluation dot cues stay hidden unless one of their masks is selected (shown below).
+        if (!IsDotCueMask(type)) { HideDotCues(); }
 
         // ----- Cases below are ordered to match the MaskSelect dropdown (see dropdownToMaskCode).
         // ----- Dropdown order: NoMask(0) → SimpleMask(6) → FovOnly(8) → PointOnly(7) → FullMask(5).
@@ -1334,7 +1596,12 @@ public class VRHostCameraControl : NetworkBehaviour
                 SetImageMask1State(true, originalImageMask1Material);
                 break;
             // Dropdown index 3 — PointOnly: same dot system as FullMask, but no center ellipse and no FOV shrink.
+            // Dropdown indices 5-8 — dot cues under evaluation: same camera and mask setup as PointOnly.
             case 7:
+            case 9:
+            case 10:
+            case 11:
+            case 12:
                 panel.GetComponent<Volume>().enabled = false;
                 panel.GetComponent<UnityEngine.UI.Image>().enabled = false;
                 SetCameraToLimitFov(false);
@@ -1345,6 +1612,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 // Hide the central ellipse but keep the GameObject active so dot Images parented
                 // under it still render. Restore material so next swap to SimpleMask is clean.
                 SetImageMask1State(false, originalImageMask1Material);
+                if (IsDotCueMask(type)) { ShowDotCues(type); }
                 break;
             // Dropdown index 4 — FullMask: original mask 5 (LimitFov3) — central ellipse + dots + FOV shrink.
             case 5:

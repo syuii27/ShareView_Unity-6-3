@@ -29,7 +29,7 @@ unity command diagnostics get_performance：帧时间（CPU、GPU、主线程）
 以下做法于 2026-10-24 跑通，都是 Play 模式内的临时操作，退出 Play 模式后场景未被标记为已修改。
 进入回放：在 Play 模式中调用场景里 VRCanvasHUD 的 ButtonLocalReplay()，约 1 秒后完成初始化。
 主实例：VRCanvasHUD 的 hostCamera 字段就是回放使用的 VRHostCameraControl。
-切换遮罩：VRHostCameraControl 的私有字段 mask（TMP_Dropdown），value 为 0 到 4，依次对应 masktype 0、6、8、7、5（NoMask、SimpleMask、FovOnly、PointOnly、FullMask）；设置 value 会触发与界面操作相同的处理。
+切换遮罩：VRHostCameraControl 的私有字段 mask（TMP_Dropdown），value 为 0 到 8，依次对应 masktype 0、6、8、7、5、9、10、11、12（NoMask、SimpleMask、FovOnly、PointOnly、FullMask、PointA_Always、PointA_Gated、PointB_Always、PointB_Gated）；设置 value 会触发与界面操作相同的处理，播放中下拉框隐藏时也有效（2026-10-24 核对）。
 切换帧率：VRHostCameraControl 的私有字段 dropdownfps（TMP_Dropdown），value 0 到 5 依次为 3、5、15、25、35、13FPS，Local Replay 默认为 5；设置 value 会触发与界面操作相同的处理（2026-10-24 核对）。
 播放与进度：调用 PlaytheRecord() 播放下拉框所选记录；IsReplayPlaying 表示是否在播，私有字段 index 为当前帧号，masktype 与 recordtype 为当前遮罩与记录。
 数据：ServerActionRecording 的 NumOfRecords() 与 Numofactions(记录号) 给出记录数与帧数，两段录制的帧数与回放时长见 docs/architecture.md 的数据路径。播完在 ObserverLogs 生成四个文件，SessionMeta 中 sampleCount 与 recordedFrameCount 相等。

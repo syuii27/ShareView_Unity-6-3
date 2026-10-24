@@ -48818,6 +48818,18 @@ MonoBehaviour:
     - m_Text: FullMask
       m_Image: {fileID: 0}
       m_Color: {r: 1, g: 1, b: 1, a: 1}
+    - m_Text: PointA Always
+      m_Image: {fileID: 0}
+      m_Color: {r: 1, g: 1, b: 1, a: 1}
+    - m_Text: PointA Gated
+      m_Image: {fileID: 0}
+      m_Color: {r: 1, g: 1, b: 1, a: 1}
+    - m_Text: PointB Always
+      m_Image: {fileID: 0}
+      m_Color: {r: 1, g: 1, b: 1, a: 1}
+    - m_Text: PointB Gated
+      m_Image: {fileID: 0}
+      m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_OnValueChanged:
     m_PersistentCalls:
       m_Calls: []
