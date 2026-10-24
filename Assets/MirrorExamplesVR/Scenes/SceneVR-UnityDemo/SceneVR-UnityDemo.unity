@@ -29078,6 +29078,9 @@ MonoBehaviour:
     - m_Text: 35FPS
       m_Image: {fileID: 0}
       m_Color: {r: 1, g: 1, b: 1, a: 1}
+    - m_Text: 13FPS
+      m_Image: {fileID: 0}
+      m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_OnValueChanged:
     m_PersistentCalls:
       m_Calls: []
@@ -39319,7 +39322,7 @@ MonoBehaviour:
   Boxes:
   - {fileID: 387364091883039441}
   fpsText: {fileID: 217963130}
-  defaultReplayFpsDropdownIndex: 2
+  defaultReplayFpsDropdownIndex: 5
   defaultReplayMaskDropdownIndex: 0
   Centerposition: {fileID: 1731298986}
   actionrecord: {fileID: 0}
@@ -65224,7 +65227,7 @@ MonoBehaviour:
   - {fileID: 475652893}
   - {fileID: 1032703430}
   fpsText: {fileID: 217963130}
-  defaultReplayFpsDropdownIndex: 2
+  defaultReplayFpsDropdownIndex: 5
   defaultReplayMaskDropdownIndex: 0
   Centerposition: {fileID: 1731298986}
   actionrecord: {fileID: 6559198439968760676}

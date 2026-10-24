@@ -52,7 +52,7 @@ public class VRHostCameraControl : NetworkBehaviour
     public TMP_Text fpsText;
     [Header("Local Replay defaults")]
     // Per-build defaults applied when entering local replay (see InitLocalReplay).
-    public int defaultReplayFpsDropdownIndex = 2;   // fps dropdown index 2 = "15FPS"
+    public int defaultReplayFpsDropdownIndex = 5;   // fps dropdown index 5 = "13FPS" (DECISIONS.md D-009)
     public int defaultReplayMaskDropdownIndex = 0;  // mask dropdown: 0=NoMask, 3=PointOnly (set per build)
     private TMP_Dropdown mask;
     private TMP_Dropdown record;
@@ -362,7 +362,7 @@ public class VRHostCameraControl : NetworkBehaviour
         // the user has even played anything.
         if (replayCompletedText != null) { replayCompletedText.SetActive(false); }
         if (endBlackMask != null) { endBlackMask.SetActive(false); }
-        // Apply the per-build local-replay defaults: fps ("15FPS") and mask (NoMask / PointOnly).
+        // Apply the per-build local-replay defaults: fps ("13FPS") and mask (NoMask / PointOnly).
         // Call the handlers directly instead of relying on the dropdown onValueChanged listeners,
         // which do not fire when the assigned value equals the current one (e.g. default NoMask).
         if (dropdownfps != null)
@@ -756,6 +756,7 @@ public class VRHostCameraControl : NetworkBehaviour
         public string fpsDropdownLabel;
         public float frameRateInterval;
         public float effectiveFps;      // target replay-step rate (1 / frameRateInterval)
+        public float playbackSpeed;     // recorded frames advanced per second / 15 (nominal recording rate); 1 = recorded speed
         public double actualAverageFps; // measured: sampleCount / durationSeconds; < effectiveFps => dropped/slow frames
         public double actualRenderFps;  // measured: render frames / durationSeconds; the render ceiling that quantizes stepping
 
@@ -836,6 +837,7 @@ public class VRHostCameraControl : NetworkBehaviour
                 fpsDropdownLabel = DropdownLabel(dropdownfps),
                 frameRateInterval = frameRateInterval,
                 effectiveFps = frameRateInterval > 0f ? 1f / frameRateInterval : 0f,
+                playbackSpeed = frameRateInterval > 0f ? ReplayFrameStep() / (frameRateInterval * 15f) : 0f,
                 actualAverageFps = durSec > 0 ? sampleCnt / durSec : 0,
                 actualRenderFps = durSec > 0 ? renderFrames / durSec : 0,
 
@@ -1113,6 +1115,10 @@ public class VRHostCameraControl : NetworkBehaviour
                 break;
             case 4:
                 frameRateInterval = 1.0f / 35.0f;
+                break;
+            // Appended after 35FPS so existing option indices (logged as fpsDropdownIndex) keep their meaning.
+            case 5:
+                frameRateInterval = 1.0f / 13.0f;
                 break;
             default:
                 break;
