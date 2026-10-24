@@ -8,6 +8,7 @@ AGENTS.md：工作规则。每次开始时读。
 PROGRESS.md：当前目标、进展、下一步与待定事项。每次开始时读，结束时覆盖更新。
 DECISIONS.md：有真实取舍的决策与理由。改动涉及已有决策的范围时读；新决策按其开头的准入规则追加。
 docs/architecture.md：目录、关键脚本职责、运行模式、核心场景对象与数据路径。改脚本、场景、网络或数据格式前读。
+docs/unity-cli.md：用 Unity CLI 连接与操作编辑器的步骤和已核对的命令。改动代码后验证、或换机后安装与连接时读。
 Packages/manifest.json 与 Packages/packages-lock.json：依赖。增删依赖或排查包问题时读。
 ProjectSettings/ProjectVersion.txt：Unity 版本。涉及环境或兼容性时读。
 

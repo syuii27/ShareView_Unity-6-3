@@ -33,7 +33,7 @@
 依据与代价：用户原话要点：按工作规则并结合本项目的特征来。代价：文件职责表与 docs/architecture.md 要随改动保持准确。
 
 ## D-005 agent 连接 Unity 编辑器的方式
-状态：待定。
+状态：待定，已被 D-006 取代。
 问题与影响范围：agent 看不到编辑器的编译结果与画面，每次改动都要用户打开 Unity 检查。选定的方案会给项目增加开发依赖。
 备选方案：
 方案 1，Unity CLI 加 Unity Pipeline 包（com.unity.pipeline）：Unity 官方方案。包在打开的编辑器内启动只接受本机连接的服务，CLI 用 unity command 进出 Play 模式、截图、重新编译与运行测试，eval 在编辑器内执行 C#，需要访问令牌。免费，不需要 Unity AI 订阅；CLI 为 beta，包为实验版 0.9.0-exp.1。安装 CLI 与登录 Unity 账号属于用户级操作；按 Unity 文档，CLI 用 irm https://unity.com/install.ps1 | iex 或 winget install Unity.CLI 安装，然后运行 unity auth login，并在编辑器打开本项目时于项目根目录运行 unity pipeline install。
@@ -42,3 +42,10 @@
 方案 4，批处理模式（-batchmode）脚本：不需要新依赖，但编辑器打开时无法运行，也看不到用户正在用的编辑器。
 决策：未定。agent 推荐方案 1；方案 1 半天内跑不通时，再由用户决定是否改用方案 3。
 依据与代价：依据为 Unity 文档（2026-10-23 查阅）https://docs.unity.com/en-us/unity-cli/replace-mcp-server-unity-cli 与 https://docs.unity.com/en-us/unity-cli/unity-pipeline/unity-pipeline-package 。未验证：方案 1 在本项目中的兼容性与实际命令清单。代价：方案 1 会改动 Packages/manifest.json 与 packages-lock.json；eval 相当于在编辑器内执行任意代码，访问令牌不得进入版本库。
+
+## D-006 agent 连接 Unity 编辑器采用 Unity CLI 加 Unity Pipeline 包
+状态：采纳。2026-10-24 用户定，取代 D-005（待定）。
+问题与影响范围：同 D-005，agent 看不到编辑器的编译结果与画面。项目将新增开发依赖 com.unity.pipeline，Packages/manifest.json 与 packages-lock.json 随之改变。
+备选方案：见 D-005。方案 2 已被 Unity 弃用；方案 3 为第三方，安全与维护要自行评估；方案 4 看不到用户正在用的编辑器。
+决策：采用 D-005 的方案 1。方案 1 半天内跑不通时，由用户决定是否改用方案 3。
+依据与代价：用户原话要点：D-005 采用方案 1。代价：CLI 为 beta、包为实验版，行为可能随版本变化；eval 相当于在编辑器内执行任意代码，访问令牌不得进入版本库；安装 CLI 与登录属于用户级操作，换机后要重做。

@@ -22,6 +22,7 @@ A Unity VR research platform for studying motion sickness mitigation in visual s
 2. Install Unity 6000.3.10f1 through Unity Hub. Add Android Build Support to build for Meta Quest.
 3. Open the project folder in Unity. Packages, including the Meta XR SDK, resolve from the Unity registry on first open.
 4. Copy the experiment recordings into the project. They are not in the repository; see [Data not in the repository](#data-not-in-the-repository).
+5. Optional, for agent-driven checks against the open Editor: install the Unity CLI and sign in, as described in [docs/unity-cli.md](docs/unity-cli.md) (in Chinese). The Unity Pipeline package it connects through is already listed in `Packages/manifest.json`.
 
 ## Run
 
@@ -47,6 +48,7 @@ These folders are excluded by `.gitignore`. They cannot be regenerated, so back 
 
 - [AGENTS.md](AGENTS.md): working rules for contributors and coding agents.
 - [docs/architecture.md](docs/architecture.md): project structure, key scripts, run modes and data paths (in Chinese).
+- [docs/unity-cli.md](docs/unity-cli.md): connecting to and driving the open Editor through the Unity CLI (in Chinese).
 - [PROGRESS.md](PROGRESS.md) and [DECISIONS.md](DECISIONS.md): current status and design decisions (in Chinese).
 
 ## License
