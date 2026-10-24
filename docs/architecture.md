@@ -23,7 +23,7 @@ Host、Server、Client 由 VRCanvasHUD 启动。Client 在局域网中发现服�
 Local Replay 不启动任何 Mirror 角色，isServer 与 isClient 都为 false，由 VRCanvasHUD 直接调用 ServerActionRecording 与 VRHostCameraControl 的本地初始化。入口为 HUD 的 Local Replay 按钮，或右手柄 A 与键盘 A；进入后，未在播放时再按 A 回到第 0 帧，按 B 播放下拉框所选的记录。
 
 ## 核心场景中的相机与遮罩
-VRHostCameraControl 与 ServerActionRecording 在核心场景中各有两个实例。引用完整的一组都在 Interactable Kinematic Torus（fileID 6559198439968760670）上；另外两个实例在其他对象上，缺少 White_Circle、border、syncButton 等引用。Local Replay 由 VRCanvasHUD 按引用是否完整打分，选出主实例。
+VRHostCameraControl 与 ServerActionRecording 在核心场景中各有两个实例。引用完整的一组都在 Interactable Kinematic Torus（fileID 6559198439968760670）上；另外两个实例在其他对象上，缺少 White_Circle、border、syncButton 等引用，其中另一个 VRHostCameraControl 组件处于禁用状态。Local Replay 由 VRCanvasHUD 按引用是否完整打分，选出主实例。
 主实例的字段与场景对象：subcamera 为 Sub Camera，fovcamera 为 FOVCamera，Image_Mask 为 Image_Mask，Image_Mask1 为 RawImage，White_Circle 为 WhiteCircle，Mark 为 Mark，border 为 Border，endBlackMask 为 EndBlackMask。
 主相机带 MainCamera 标签与 TrackedPoseDriver，位于预制体 Complete XR Origin Set Up 嵌套的 XR Origin Preconfigured 中。场景中所有 Canvas 都是 World Space。
 

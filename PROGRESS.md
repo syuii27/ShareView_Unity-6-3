@@ -8,13 +8,12 @@
 验收：每个改动的验收方式写在各自的计划里。
 
 ## 下一步
-1. 用户审阅并提交编辑器连接（D-006）的改动：Packages/manifest.json、Packages/packages-lock.json、AGENTS.md、DECISIONS.md、PROGRESS.md、README.md、docs/unity-cli.md。按 2026-10-24 用户的决定，一起提交，暂不 push。连接已验证，所用命令与结果见 docs/unity-cli.md 的"已核对的命令"一节。
+1. 用户审阅并提交 D-007 的改动：AGENTS.md、DECISIONS.md、PROGRESS.md、docs/unity-cli.md、docs/architecture.md。
 2. 用户给出两个功能改动的内容。
-3. agent 逐个写计划，批准后实现，用 docs/unity-cli.md 中的命令自验，再交用户在头显中验收。
+3. agent 逐个写计划，批准后实现，用 docs/unity-cli.md 中的命令（含 eval）自验，再交用户在头显中验收。
 
 ## 待人定或确认的事
 两个功能改动：各自的目标、现在与期望的行为、涉及的模式（Host、Client 或 Local Replay）、验收方式与参数。
-agent 是否可以使用 eval：编辑器默认允许，只受令牌保护，见 docs/unity-cli.md。
 VRHostCameraControl.cs（1476 行）按职责拆分的时机；agent 建议放在两个功能改动完成之后。
 
 ## 阻塞与未验证事项

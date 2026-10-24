@@ -20,10 +20,13 @@ unity command console get --level error --tail 10：最近的错误条目。
 unity command script recompile：强制重新编译，之后轮询 unity command script recompile_status，结果为纯文本 idle、triggered、compiling、completed 或 up_to_date。没有脚本改动时直接返回 up_to_date，不会真的编译。
 unity command editor.playmode start 与 unity command editor.playmode stop：进入与退出 Play 模式，用 editor status 的 playMode 字段确认（playing 或 stopped）。本项目进入 Play 模式约需 9 秒。
 unity command capture game_view --max_resolution 960 --json：截 Game 视图，PNG 以 base64 放在结果的 base64 字段中，由 agent 解码后保存在项目之外。
-未验证：runtime simulate_key（模拟 Input System 按键，可用来按 Local Replay 的 A、B 键）、test run、diagnostics get_performance。
+unity command script eval_file --file <绝对路径>.cs：执行文件中的 C# 代码，代码文件放在项目之外。代码写成方法体，用 return 返回结果；编辑器会自动加上 System、System.Collections.Generic、System.Linq、UnityEngine 与 UnityEditor 的 using，项目脚本中的类型可以直接使用，私有字段用反射读取。结果在返回 JSON 的 result 字段中，编译错误在 diagnostics 字段中。
+未验证：script eval --code（直接传一行代码）、runtime simulate_key（模拟 Input System 按键，可用来按 Local Replay 的 A、B 键）、test run、diagnostics get_performance。
 
 ## 注意
 capture 的 save_path 按 Assets 目录解析，例如 Temp/x.png 会写到 Assets/Temp/x.png，并被 Unity 当作资产导入。不要使用 save_path，改用上面的 base64 方式。
-script eval、script eval_file 与 script run 会在编辑器内执行任意 C#。编辑器默认允许，只靠令牌保护：所有请求都要带编辑器启动时生成的令牌，令牌保存在 Library/Pipeline/.unity-pipeline-port 中（Library 不进版本库），由 CLI 自动读取。agent 是否使用 eval 由用户定。
-editor save_all，以及 asset、settings、prefab、scene 等分组中会写入的命令，都会改动项目文件；不在已批准的计划内时，用前先说明影响并等用户确认。
+script eval、script eval_file 与 script run 会在编辑器内执行任意 C#。编辑器默认允许，只靠令牌保护：所有请求都要带编辑器启动时生成的令牌，令牌保存在 Library/Pipeline/.unity-pipeline-port 中（Library 不进版本库），由 CLI 自动读取。允许 agent 使用，理由见 DECISIONS.md D-007；它与 editor save_all，以及 asset、settings、prefab、scene 等分组中会写入的命令，都按 AGENTS.md 项目特有规则中操作编辑器的那一条处理。
+eval 的超时只作用于编译阶段，执行阶段不受限制。代码在主线程上运行，避免无上限的循环和阻塞调用，否则会卡住编辑器。
+每次 eval 会在本机 Library/Pipeline/eval-usage.jsonl 记一条使用统计，默认不记代码原文，不向外发送。
+在 Play 模式中驱动 Local Replay 跑完，会在项目根目录的 ObserverLogs 下生成观察者日志，这些是测试产物，在报告中列出。不触发录制与同步，它们会写 RecordData。
 Pipeline 包自带文档，位于 Library/PackageCache/com.unity.pipeline@*/Documentation~。

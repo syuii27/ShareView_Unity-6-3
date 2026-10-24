@@ -49,6 +49,7 @@ README.md 用英文，其他文档用中文，这是"格式"一条的例外，�
 涉及 Mirror 时分清 isServer、isClient、Host、纯 Client，以及不启动任何网络角色的 Local Replay。
 涉及相机或遮罩时检查主相机、Sub Camera、FOVCamera、TrackedPoseDriver、XR Origin、Image_Mask、WhiteCircle、Mark 与 Border 的关系，字段与对象的对应见 docs/architecture.md。
 核心场景文件约 2.3MB，按对象名或 GUID 检索相关片段，不整读。
+通过 Unity CLI（含 eval）操作编辑器时，读取和 Play 模式中退出即还原的操作直接做；会留在项目里的改动，即编辑模式下改场景或预制体、改资产或设置、保存场景，视同改文件，只在批准的计划内做，并以保存后的文件 diff 交用户审阅。理由见 DECISIONS.md D-007，用法见 docs/unity-cli.md。
 只由人做或定的事（用户本人）：
 commit、push 与提交说明。agent 不执行 git commit 与 git push；"计划"与"结束"中的提交，改为 agent 给出变更说明、建议的提交拆分与提交说明草稿，由用户审阅后提交。提交说明沿用版本历史的风格：英文、动词开头的单行短句，例如 Fix box shaking issue by adding else branch。理由见 DECISIONS.md D-001。
 头显与 Quest 设备上的测试，以及往设备安装构建。
