@@ -20,6 +20,7 @@ Build Settings 中只启用核心场景 Assets/MirrorExamplesVR/Scenes/SceneVR-U
 
 ## 运行模式
 Host、Server、Client 由 VRCanvasHUD 启动。Client 在局域网中发现服务器后自动连接发现的第一个；Auto 先搜索约 3 秒，找不到就以 Host 启动。
+实时数据流：Host 每帧用 ClientRpc（SyncTransform）发送主相机姿态，Mirror 按 sendRate 批量发出（场景中覆盖为 60，预制体默认为 30）；Client 把收到的姿态存入 syncedRotation，到显示步才复制到 TempRotation 并显示，所以最新收到的姿态领先画面 0 至 1 个显示步。运动补偿点目前用的是 TempRotation。
 Local Replay 不启动任何 Mirror 角色，isServer 与 isClient 都为 false，由 VRCanvasHUD 直接调用 ServerActionRecording 与 VRHostCameraControl 的本地初始化。入口为 HUD 的 Local Replay 按钮，或右手柄 A 与键盘 A；进入后，未在播放时再按 A 回到第 0 帧，按 B 播放下拉框所选的记录。
 实验用法（用户，2026-10-24）：实验只用 Local Replay，固定 15FPS。构建 Windows Standalone 的 exe，把整个构建文件夹拷到实验用的 Windows 电脑，经 Quest Link 串流到头显；头显本身算力不足，不用 Android 构建。录制今后基本不再使用，只回放现有的两段录制，见数据路径。
 
@@ -28,11 +29,13 @@ VRHostCameraControl 与 ServerActionRecording 在核心场景中各有两个实�
 主实例的字段与场景对象：subcamera 为 Sub Camera，fovcamera 为 FOVCamera，Image_Mask 为 Image_Mask，Image_Mask1 为 RawImage，White_Circle 为 WhiteCircle，Mark 为 Mark，border 为 Border，endBlackMask 为 EndBlackMask。
 主相机带 MainCamera 标签与 TrackedPoseDriver，位于预制体 Complete XR Origin Set Up 嵌套的 XR Origin Preconfigured 中。场景中所有 Canvas 都是 World Space。
 Local Replay 播放时主相机由记录驱动，TrackedPoseDriver 关闭，不跟随头显。Sub Camera 挂在 XR Origin 的 CameraOffset 下，在复制的 SubRoom 中渲染：FovOnly、PointOnly、FullMask 下代码把它放在操作者位置加 SubCameraRoomOffset (6.5, 0, 42)，NoMask 与 SimpleMask 下不更新位置；旋转由它的 TrackedPoseDriver（只跟随旋转）取参与者的头部转动。Sub Camera 输出到 Render_tex（2048×2048，深度格式为 None），Render_tex 经 LimFov3.mat（着色器 TransparentCircle，挖空中央椭圆）显示在 Image_Mask1 上。Image_Mask1 所在的 Canvas 是主相机的子对象，所以椭圆内是操作者视角，椭圆外是随参与者转头的 SubRoom 画面；PointOnly 下关闭这张 RawImage，只保留其下的运动补偿点。
-运动补偿点按操作者与参与者头部转动之差算出相对运动方向，并沿该方向移动，用于提示相对运动的风险；这个方向是设计意图（用户确认，2026-10-24）。
+运动补偿点按操作者与参与者头部转动之差算出相对运动方向，并沿该方向移动，用于提示相对运动的风险；这个方向是设计意图（用户确认，2026-10-24）。提示算法须按实时系统设计，只用显示时刻已有的数据，见 DECISIONS.md D-008。
+运动补偿点的现状（改动前；2026-10-24 读代码、场景与离线计算，经独立复算）：点平面距主相机约 0.278 m，起点离心度 20.7° 至 35.4°，视野中心处点径约 2.88°，贴图为不透明的白环黑心。约每 1/60 秒调用一次，72、90、120 Hz 渲染下实际间隔为 27.8、22.2、16.7 ms；每次比较视线变化角是否达到 2.7°，不是角速度门限，所以参与者自己转头要达到约 97、122、162 °/s 才触发，插值回放下极少触发。每次移动约为该步转角的 0.27 倍，累计只有约 0.12 倍；约每 1.5 秒全部清空一次。
 
 ## 数据路径
 录制：写入 Application.dataPath/RecordData，编辑器中即 Assets/RecordData；文件为 MainPosData.json、MainRotData.json、BoxPosData.json、BoxRotData.json。
 联网回放：Client 播放完一条记录时，把观察者位姿写入 Application.dataPath/RecordData 下的 PaPosData.json 与 PaRotData.json。
 本地回放：读取 Application.streamingAssetsPath/RecordData 下与录制同名的四个文件。播放完一条记录时写观察者日志到 Application.dataPath 上一级目录中的 ObserverLogs：编辑器中为项目根目录，Windows 构建中为 exe 所在目录。文件为 PaPosData_、PaRotData_、PaFrameIndex_ 与 SessionMeta_，后缀为记录序号与时间戳。
-两段录制：StreamingAssets/RecordData 设计上一次只放一段，每个构建只含一段（用户，2026-10-24）。现有两段在 Assets/RecordData/1（3776 帧）与 Assets/RecordData/2（3443 帧），各含一段（2026-10-24 解析文件得到）。录制文件不带时间戳；按代码，15FPS 下回放每步的时刻按 1/15 秒累加，渲染帧率高于 15 时时长约为帧数除以 15，即约 251.7 秒与 229.5 秒。823b782（2026-06-10）之前的构建，回放时长随渲染帧率变化。
+两段录制：StreamingAssets/RecordData 设计上一次只放一段，每个构建只含一段（用户，2026-10-24）。现有两段在 Assets/RecordData/1（3776 帧）与 Assets/RecordData/2（3443 帧），各含一段（2026-10-24 解析文件得到）。录制文件不带时间戳。按代码，回放每步的时刻按步长累加；每步前进 1 帧且渲染帧率高于步速时，可见的运动时长为（帧数 − 1）/ 步速，15FPS 下约 251.7 秒与 229.5 秒，最后一帧与结束黑屏在同一渲染帧出现。823b782（2026-06-10）之前，每步把下一步的时刻重设为当前时刻加间隔，每步占整数个渲染帧；而且 a75a0d4（2026-06-10 14:18）之前，15FPS 档的实际间隔是 1/17 秒。按代码模拟（2026-10-24，未在设备上核对），这些早期构建的回放时长：渲染 45、60、90、120 fps 时与现在相同；72 fps 时多 4%（262.2 秒与 239.0 秒）；36 至 37 fps 时多 22% 至 25%（约 306 至 315 秒与 279 至 287 秒），动作也相应变慢；80 fps 时少 6%。d47c984（2026-06-10 15:16）之后的构建在 SessionMeta 中记有 durationSeconds，可直接核对。
+两段录制约 32% 的帧与前一帧完全相同（位置与旋转同时重复，多为每 3 帧重复 1 帧），15FPS 回放时每秒约 10.2 个不同姿态；做插值或平滑回放要先跳过重复帧。箱子数据的重复与相机的重复只在约 75% 至 79% 的帧上一致，插值时箱子要按自身数据处理。录制结束时有 20 个箱子离开了初始位置，循环、往返或拼接回放会让箱子瞬移或倒放。以上为 2026-10-24 离线计算并经独立复算；调研记录按用户决定为临时文件，未留存。
 观察者日志的内容：PaPos 为记录中的操作者位置；PaRot 为 Sub Camera 的世界旋转，即参与者的头部朝向，含进入回放时的水平对齐；参与者的头部位置目前不记录。后缀中的记录序号总是 Rec1，区分两段录制看日志所在的构建文件夹或 SessionMeta 的 recordedFrameCount。日志写到 exe 同级的 ObserverLogs，用户已在实验电脑上确认（2026-10-24）。
